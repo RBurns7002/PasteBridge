@@ -36,38 +36,61 @@ jobs:
       working-directory: frontend
       run: yarn install
 
-    - name: Install EAS CLI
-      run: npm install -g eas-cli
-
-    - name: Setup Expo
-      uses: expo/expo-github-action@v8
-      with:
-        eas-version: latest
-        token: ${{ secrets.EXPO_TOKEN }}
-
     - name: Create .env file
       working-directory: frontend
       run: |
         echo "EXPO_PUBLIC_BACKEND_URL=${{ vars.BACKEND_URL || 'https://pastebridge.preview.emergentagent.com' }}" > .env
 
-    - name: Build Android APK with EAS
+    - name: Generate native Android project
       working-directory: frontend
-      run: eas build --platform android --profile preview --non-interactive --local
-      env:
-        EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      run: npx expo prebuild --platform android --clean
 
-    - name: Find and move APK file
+    - name: Create signing keystore
+      working-directory: frontend/android
+      run: |
+        keytool -genkeypair -v \
+          -keystore release.keystore \
+          -alias pastebridge \
+          -keyalg RSA -keysize 2048 -validity 36500 \
+          -storepass pastebridge123 -keypass pastebridge123 \
+          -dname "CN=PasteBridge,O=PasteBridge,C=US"
+
+    - name: Configure signing
+      working-directory: frontend/android
+      run: |
+        echo "RELEASE_STORE_FILE=release.keystore" >> gradle.properties
+        echo "RELEASE_STORE_PASSWORD=pastebridge123" >> gradle.properties
+        echo "RELEASE_KEY_ALIAS=pastebridge" >> gradle.properties
+        echo "RELEASE_KEY_PASSWORD=pastebridge123" >> gradle.properties
+
+    - name: Update build.gradle for signing
+      working-directory: frontend/android/app
+      run: |
+        # Add signing config to build.gradle
+        sed -i '/buildTypes {/i\    signingConfigs {\n        release {\n            storeFile file(RELEASE_STORE_FILE)\n            storePassword RELEASE_STORE_PASSWORD\n            keyAlias RELEASE_KEY_ALIAS\n            keyPassword RELEASE_KEY_PASSWORD\n        }\n    }' build.gradle
+        sed -i 's/signingConfig signingConfigs.debug/signingConfig signingConfigs.release/' build.gradle
+
+    - name: Grant execute permission for gradlew
+      working-directory: frontend/android
+      run: chmod +x gradlew
+
+    - name: Build Release APK
+      working-directory: frontend/android
+      run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+    - name: Find and rename APK
       id: find_apk
       working-directory: frontend
       run: |
-        APK_PATH=$(find . -name "*.apk" -type f | head -1)
+        APK_PATH=$(find android/app/build/outputs/apk -name "*.apk" -type f | head -1)
         if [ -n "$APK_PATH" ]; then
-          mv "$APK_PATH" ./pastebridge.apk
+          cp "$APK_PATH" ./pastebridge.apk
           echo "apk_found=true" >> $GITHUB_OUTPUT
-          echo "Found and renamed APK"
+          ls -la pastebridge.apk
         else
           echo "apk_found=false" >> $GITHUB_OUTPUT
           echo "No APK found"
+          find . -name "*.apk" -type f
         fi
 
     - name: Upload APK Artifact
@@ -101,7 +124,7 @@ jobs:
           
           ### Features
           - Memorable codes (easy to type)
-          - One-tap clipboard capture
+          - One-tap clipboard capture  
           - Auto-refreshing web notepad
           - Mini mode with floating button
           
