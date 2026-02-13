@@ -1,0 +1,106 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'yarn'
+        cache-dependency-path: frontend/yarn.lock
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: Install dependencies
+      working-directory: frontend
+      run: yarn install --frozen-lockfile
+
+    - name: Install EAS CLI
+      run: npm install -g eas-cli
+
+    - name: Setup Expo
+      uses: expo/expo-github-action@v8
+      with:
+        eas-version: latest
+        token: ${{ secrets.EXPO_TOKEN }}
+
+    - name: Create .env file
+      working-directory: frontend
+      run: |
+        echo "EXPO_PUBLIC_BACKEND_URL=${{ vars.BACKEND_URL || 'https://pastebridge.preview.emergentagent.com' }}" > .env
+
+    - name: Build Android APK with EAS
+      working-directory: frontend
+      run: eas build --platform android --profile preview --non-interactive --local
+      env:
+        EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+    - name: Find APK file
+      id: find_apk
+      working-directory: frontend
+      run: |
+        APK_PATH=$(find . -name "*.apk" -type f | head -1)
+        echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+        echo "Found APK at: $APK_PATH"
+
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: pastebridge-apk
+        path: frontend/*.apk
+        retention-days: 90
+
+    - name: Create Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v1.0.${{ github.run_number }}
+        name: PasteBridge v1.0.${{ github.run_number }}
+        body: |
+          ## PasteBridge - Clipboard to Web Notepad
+          
+          ### Installation
+          1. Download the APK file below
+          2. Transfer to your Android phone
+          3. Open the APK to install (enable "Install unknown apps" if prompted)
+          
+          ### How to Use
+          1. Open the app - you'll see your unique code (e.g., `warmfern34`)
+          2. On your PC, go to: **https://pastebridge.preview.emergentagent.com/api/**
+          3. Enter the code from your phone
+          4. Copy text on your phone, tap "Capture & Send"
+          5. Text appears on your PC instantly!
+          
+          ### Features
+          - Memorable codes (easy to type)
+          - One-tap clipboard capture
+          - Auto-refreshing web notepad
+          - Mini mode with floating button
+        files: frontend/*.apk
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
