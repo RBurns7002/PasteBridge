@@ -22,8 +22,6 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '20'
-        cache: 'yarn'
-        cache-dependency-path: frontend/yarn.lock
 
     - name: Set up JDK 17
       uses: actions/setup-java@v4
@@ -36,7 +34,7 @@ jobs:
 
     - name: Install dependencies
       working-directory: frontend
-      run: yarn install --frozen-lockfile
+      run: yarn install
 
     - name: Install EAS CLI
       run: npm install -g eas-cli
@@ -58,23 +56,30 @@ jobs:
       env:
         EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
-    - name: Find APK file
+    - name: Find and move APK file
       id: find_apk
       working-directory: frontend
       run: |
         APK_PATH=$(find . -name "*.apk" -type f | head -1)
-        echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
-        echo "Found APK at: $APK_PATH"
+        if [ -n "$APK_PATH" ]; then
+          mv "$APK_PATH" ./pastebridge.apk
+          echo "apk_found=true" >> $GITHUB_OUTPUT
+          echo "Found and renamed APK"
+        else
+          echo "apk_found=false" >> $GITHUB_OUTPUT
+          echo "No APK found"
+        fi
 
     - name: Upload APK Artifact
+      if: steps.find_apk.outputs.apk_found == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: pastebridge-apk
-        path: frontend/*.apk
+        path: frontend/pastebridge.apk
         retention-days: 90
 
     - name: Create Release
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.find_apk.outputs.apk_found == 'true'
       uses: softprops/action-gh-release@v1
       with:
         tag_name: v1.0.${{ github.run_number }}
@@ -83,7 +88,7 @@ jobs:
           ## PasteBridge - Clipboard to Web Notepad
           
           ### Installation
-          1. Download the APK file below
+          1. Download `pastebridge.apk` below
           2. Transfer to your Android phone
           3. Open the APK to install (enable "Install unknown apps" if prompted)
           
@@ -99,7 +104,10 @@ jobs:
           - One-tap clipboard capture
           - Auto-refreshing web notepad
           - Mini mode with floating button
-        files: frontend/*.apk
+          
+          ### Using with Obtainium
+          Add this repo URL to Obtainium for automatic updates.
+        files: frontend/pastebridge.apk
         draft: false
         prerelease: false
       env:
