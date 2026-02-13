@@ -85,13 +85,12 @@ class CodeLookupRequest(BaseModel):
 @api_router.post("/notepad", response_model=NotepadResponse)
 async def create_notepad():
     """Create a new notepad session with memorable code"""
-    # Ensure unique code
     for _ in range(10):
         notepad = Notepad()
         existing = await db.notepads.find_one({"code": notepad.code})
         if not existing:
             break
-        notepad = Notepad()  # Generate new code
+        notepad = Notepad()
     
     notepad_dict = notepad.dict()
     await db.notepads.insert_one(notepad_dict)
@@ -164,11 +163,7 @@ async def landing_page():
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>PasteBridge - Clipboard to PC</title>
         <style>
-            * {
-                box-sizing: border-box;
-                margin: 0;
-                padding: 0;
-            }
+            * { box-sizing: border-box; margin: 0; padding: 0; }
             body {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
@@ -179,26 +174,10 @@ async def landing_page():
                 color: #e4e4e7;
                 padding: 20px;
             }
-            .container {
-                max-width: 480px;
-                width: 100%;
-                text-align: center;
-            }
-            .logo {
-                font-size: 3rem;
-                margin-bottom: 8px;
-            }
-            h1 {
-                font-size: 2.5rem;
-                color: #60a5fa;
-                margin-bottom: 8px;
-                font-weight: 700;
-            }
-            .tagline {
-                color: #a1a1aa;
-                font-size: 1.1rem;
-                margin-bottom: 48px;
-            }
+            .container { max-width: 480px; width: 100%; text-align: center; }
+            .logo { font-size: 3rem; margin-bottom: 8px; }
+            h1 { font-size: 2.5rem; color: #60a5fa; margin-bottom: 8px; font-weight: 700; }
+            .tagline { color: #a1a1aa; font-size: 1.1rem; margin-bottom: 48px; }
             .card {
                 background: rgba(255,255,255,0.05);
                 border-radius: 20px;
@@ -206,12 +185,7 @@ async def landing_page():
                 backdrop-filter: blur(10px);
                 border: 1px solid rgba(255,255,255,0.1);
             }
-            .card h2 {
-                font-size: 1.2rem;
-                color: #d4d4d8;
-                margin-bottom: 24px;
-                font-weight: 500;
-            }
+            .card h2 { font-size: 1.2rem; color: #d4d4d8; margin-bottom: 24px; font-weight: 500; }
             .code-input {
                 width: 100%;
                 padding: 16px 20px;
@@ -226,14 +200,8 @@ async def landing_page():
                 outline: none;
                 transition: all 0.2s;
             }
-            .code-input:focus {
-                border-color: #60a5fa;
-                box-shadow: 0 0 20px rgba(96, 165, 250, 0.2);
-            }
-            .code-input::placeholder {
-                color: #52525b;
-                letter-spacing: 1px;
-            }
+            .code-input:focus { border-color: #60a5fa; box-shadow: 0 0 20px rgba(96, 165, 250, 0.2); }
+            .code-input::placeholder { color: #52525b; letter-spacing: 1px; }
             .submit-btn {
                 width: 100%;
                 padding: 16px;
@@ -247,39 +215,12 @@ async def landing_page():
                 margin-top: 16px;
                 transition: all 0.2s;
             }
-            .submit-btn:hover {
-                background: #2563eb;
-                transform: translateY(-1px);
-            }
-            .submit-btn:active {
-                transform: translateY(0);
-            }
-            .error {
-                color: #ef4444;
-                margin-top: 16px;
-                font-size: 0.95rem;
-                display: none;
-            }
-            .error.show {
-                display: block;
-            }
-            .example {
-                margin-top: 24px;
-                color: #71717a;
-                font-size: 0.85rem;
-            }
-            .example code {
-                background: rgba(96, 165, 250, 0.1);
-                padding: 4px 8px;
-                border-radius: 4px;
-                color: #60a5fa;
-                font-family: monospace;
-            }
-            .footer {
-                margin-top: 32px;
-                color: #52525b;
-                font-size: 0.8rem;
-            }
+            .submit-btn:hover { background: #2563eb; transform: translateY(-1px); }
+            .error { color: #ef4444; margin-top: 16px; font-size: 0.95rem; display: none; }
+            .error.show { display: block; }
+            .example { margin-top: 24px; color: #71717a; font-size: 0.85rem; }
+            .example code { background: rgba(96, 165, 250, 0.1); padding: 4px 8px; border-radius: 4px; color: #60a5fa; }
+            .footer { margin-top: 32px; color: #52525b; font-size: 0.8rem; }
         </style>
     </head>
     <body>
@@ -287,63 +228,30 @@ async def landing_page():
             <div class="logo">📋</div>
             <h1>PasteBridge</h1>
             <p class="tagline">Phone clipboard → PC notepad</p>
-            
             <div class="card">
                 <h2>Enter your notepad code</h2>
                 <form id="codeForm" onsubmit="handleSubmit(event)">
-                    <input 
-                        type="text" 
-                        id="codeInput" 
-                        class="code-input" 
-                        placeholder="redtiger42"
-                        autocomplete="off"
-                        autocapitalize="none"
-                        spellcheck="false"
-                    />
+                    <input type="text" id="codeInput" class="code-input" placeholder="redtiger42" autocomplete="off" autocapitalize="none" spellcheck="false" />
                     <button type="submit" class="submit-btn">View Notepad</button>
                 </form>
                 <p id="error" class="error"></p>
                 <p class="example">Example: <code>suntiger42</code></p>
             </div>
-            
             <p class="footer">Get the code from the PasteBridge app on your phone</p>
         </div>
-        
         <script>
             async function handleSubmit(e) {
                 e.preventDefault();
                 const code = document.getElementById('codeInput').value.trim().toLowerCase();
                 const errorEl = document.getElementById('error');
-                
-                if (!code) {
-                    errorEl.textContent = 'Please enter a code';
-                    errorEl.classList.add('show');
-                    return;
-                }
-                
+                if (!code) { errorEl.textContent = 'Please enter a code'; errorEl.classList.add('show'); return; }
                 errorEl.classList.remove('show');
-                
                 try {
-                    const response = await fetch('/api/notepad/lookup', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ code })
-                    });
-                    
-                    if (response.ok) {
-                        window.location.href = '/api/notepad/' + code + '/view';
-                    } else {
-                        const data = await response.json();
-                        errorEl.textContent = data.detail || 'Notepad not found. Check your code.';
-                        errorEl.classList.add('show');
-                    }
-                } catch (err) {
-                    errorEl.textContent = 'Connection error. Please try again.';
-                    errorEl.classList.add('show');
-                }
+                    const response = await fetch('/api/notepad/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+                    if (response.ok) { window.location.href = '/api/notepad/' + code + '/view'; }
+                    else { const data = await response.json(); errorEl.textContent = data.detail || 'Notepad not found.'; errorEl.classList.add('show'); }
+                } catch (err) { errorEl.textContent = 'Connection error. Please try again.'; errorEl.classList.add('show'); }
             }
-            
-            // Auto-focus input
             document.getElementById('codeInput').focus();
         </script>
     </body>
@@ -352,10 +260,10 @@ async def landing_page():
     return HTMLResponse(content=html_content)
 
 
-# Web View Route - HTML page for viewing notepad
+# Web View Route - HTML page for viewing notepad (NO auto-refresh, uses JS polling)
 @api_router.get("/notepad/{code}/view", response_class=HTMLResponse)
 async def view_notepad(code: str):
-    """Web view of notepad - auto-refreshing HTML page"""
+    """Web view of notepad - uses JavaScript polling to update without page refresh"""
     notepad = await db.notepads.find_one({"code": code.lower()})
     if not notepad:
         return HTMLResponse(
@@ -367,32 +275,6 @@ async def view_notepad(code: str):
             status_code=404
         )
     
-    entries_html = ""
-    for entry in reversed(notepad.get("entries", [])):
-        timestamp = entry.get("timestamp", datetime.utcnow())
-        if isinstance(timestamp, str):
-            timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-        time_str = timestamp.strftime("%H:%M:%S")
-        text = entry.get("text", "").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
-        entries_html += f'''
-        <div class="entry">
-            <div class="entry-header">
-                <span class="timestamp">{time_str}</span>
-                <button class="copy-btn" onclick="copyText(this)" data-text="{entry.get("text", "").replace('"', '&quot;')}">Copy</button>
-            </div>
-            <div class="text">{text}</div>
-        </div>
-        '''
-    
-    if not entries_html:
-        entries_html = '''<div class="empty">
-            <div class="empty-icon">📋</div>
-            <p>No entries yet</p>
-            <p class="empty-hint">Copy text on your phone and tap the capture button</p>
-        </div>'''
-    
-    entry_count = len(notepad.get("entries", []))
-    
     html_content = f'''
     <!DOCTYPE html>
     <html lang="en">
@@ -400,13 +282,8 @@ async def view_notepad(code: str):
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>PasteBridge - {notepad.get("code")}</title>
-        <meta http-equiv="refresh" content="3">
         <style>
-            * {{
-                box-sizing: border-box;
-                margin: 0;
-                padding: 0;
-            }}
+            * {{ box-sizing: border-box; margin: 0; padding: 0; }}
             body {{
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
@@ -414,10 +291,7 @@ async def view_notepad(code: str):
                 color: #e4e4e7;
                 padding: 20px;
             }}
-            .container {{
-                max-width: 800px;
-                margin: 0 auto;
-            }}
+            .container {{ max-width: 800px; margin: 0 auto; }}
             .header {{
                 display: flex;
                 align-items: center;
@@ -426,11 +300,7 @@ async def view_notepad(code: str):
                 border-bottom: 1px solid rgba(255,255,255,0.1);
                 margin-bottom: 24px;
             }}
-            .header-left h1 {{
-                font-size: 1.5rem;
-                color: #60a5fa;
-                margin-bottom: 4px;
-            }}
+            .header-left h1 {{ font-size: 1.5rem; color: #60a5fa; margin-bottom: 4px; }}
             .code-badge {{
                 display: inline-flex;
                 align-items: center;
@@ -443,15 +313,13 @@ async def view_notepad(code: str):
                 color: #60a5fa;
                 font-weight: 600;
             }}
-            .code-badge .icon {{
-                font-size: 1rem;
-            }}
             .status {{
                 display: flex;
                 align-items: center;
                 gap: 8px;
                 font-size: 0.85rem;
                 color: #71717a;
+                margin-bottom: 20px;
             }}
             .status .dot {{
                 width: 8px;
@@ -460,48 +328,19 @@ async def view_notepad(code: str):
                 border-radius: 50%;
                 animation: pulse 2s infinite;
             }}
-            @keyframes pulse {{
-                0%, 100% {{ opacity: 1; }}
-                50% {{ opacity: 0.5; }}
-            }}
-            .stats {{
-                text-align: right;
-            }}
-            .stats .count {{
-                font-size: 1.5rem;
-                font-weight: 700;
-                color: #ffffff;
-            }}
-            .stats .label {{
-                font-size: 0.8rem;
-                color: #71717a;
-            }}
-            .entries {{
-                display: flex;
-                flex-direction: column;
-                gap: 12px;
-            }}
+            @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.5; }} }}
+            .stats {{ text-align: right; }}
+            .stats .count {{ font-size: 1.5rem; font-weight: 700; color: #ffffff; }}
+            .stats .label {{ font-size: 0.8rem; color: #71717a; }}
+            .entries {{ display: flex; flex-direction: column; gap: 12px; }}
             .entry {{
                 background: rgba(255,255,255,0.05);
                 border-radius: 12px;
                 padding: 16px;
                 border-left: 3px solid #60a5fa;
-                transition: all 0.2s;
             }}
-            .entry:hover {{
-                background: rgba(255,255,255,0.08);
-            }}
-            .entry-header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 8px;
-            }}
-            .timestamp {{
-                font-size: 0.75rem;
-                color: #71717a;
-                font-family: monospace;
-            }}
+            .entry-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }}
+            .timestamp {{ font-size: 0.75rem; color: #71717a; font-family: monospace; }}
             .copy-btn {{
                 background: rgba(96, 165, 250, 0.2);
                 border: none;
@@ -510,50 +349,17 @@ async def view_notepad(code: str):
                 border-radius: 6px;
                 font-size: 0.75rem;
                 cursor: pointer;
-                transition: all 0.2s;
             }}
-            .copy-btn:hover {{
-                background: rgba(96, 165, 250, 0.3);
-            }}
-            .copy-btn.copied {{
-                background: #22c55e;
-                color: white;
-            }}
-            .text {{
-                font-size: 1rem;
-                line-height: 1.6;
-                word-break: break-word;
-                white-space: pre-wrap;
-                color: #f4f4f5;
-            }}
-            .empty {{
-                text-align: center;
-                padding: 80px 20px;
-                color: #71717a;
-            }}
-            .empty-icon {{
-                font-size: 4rem;
-                margin-bottom: 16px;
-                opacity: 0.5;
-            }}
-            .empty p {{
-                font-size: 1.2rem;
-                margin-bottom: 8px;
-            }}
-            .empty-hint {{
-                font-size: 0.9rem !important;
-                color: #52525b;
-            }}
-            .back-link {{
-                display: inline-block;
-                margin-top: 24px;
-                color: #60a5fa;
-                text-decoration: none;
-                font-size: 0.9rem;
-            }}
-            .back-link:hover {{
-                text-decoration: underline;
-            }}
+            .copy-btn:hover {{ background: rgba(96, 165, 250, 0.3); }}
+            .copy-btn.copied {{ background: #22c55e; color: white; }}
+            .text {{ font-size: 1rem; line-height: 1.6; word-break: break-word; white-space: pre-wrap; color: #f4f4f5; }}
+            .empty {{ text-align: center; padding: 80px 20px; color: #71717a; }}
+            .empty-icon {{ font-size: 4rem; margin-bottom: 16px; opacity: 0.5; }}
+            .empty p {{ font-size: 1.2rem; margin-bottom: 8px; }}
+            .back-link {{ display: inline-block; margin-top: 24px; color: #60a5fa; text-decoration: none; font-size: 0.9rem; }}
+            .back-link:hover {{ text-decoration: underline; }}
+            .new-entry {{ animation: slideIn 0.3s ease-out; }}
+            @keyframes slideIn {{ from {{ opacity: 0; transform: translateY(-10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
         </style>
     </head>
     <body>
@@ -561,32 +367,42 @@ async def view_notepad(code: str):
             <div class="header">
                 <div class="header-left">
                     <h1>PasteBridge</h1>
-                    <div class="code-badge">
-                        <span class="icon">🔗</span>
-                        {notepad.get("code")}
-                    </div>
+                    <div class="code-badge">🔗 {notepad.get("code")}</div>
                 </div>
                 <div class="stats">
-                    <div class="count">{entry_count}</div>
-                    <div class="label">{'entry' if entry_count == 1 else 'entries'}</div>
+                    <div class="count" id="entryCount">0</div>
+                    <div class="label">entries</div>
                 </div>
             </div>
-            
             <div class="status">
                 <span class="dot"></span>
-                Auto-refreshing every 3 seconds
+                <span id="statusText">Live updating</span>
             </div>
-            
-            <div class="entries">
-                {entries_html}
+            <div class="entries" id="entriesContainer">
+                <div class="empty" id="emptyState">
+                    <div class="empty-icon">📋</div>
+                    <p>No entries yet</p>
+                    <p style="font-size: 0.9rem; color: #52525b;">Copy text on your phone and tap the capture button</p>
+                </div>
             </div>
-            
             <a href="/api/" class="back-link">← Enter different code</a>
         </div>
-        
         <script>
-            function copyText(btn) {{
-                const text = btn.getAttribute('data-text');
+            const CODE = '{notepad.get("code")}';
+            let lastEntryCount = 0;
+            
+            function escapeHtml(text) {{
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }}
+            
+            function formatTime(timestamp) {{
+                const date = new Date(timestamp);
+                return date.toLocaleTimeString('en-US', {{ hour12: false }});
+            }}
+            
+            function copyText(btn, text) {{
                 navigator.clipboard.writeText(text).then(() => {{
                     btn.textContent = 'Copied!';
                     btn.classList.add('copied');
@@ -596,6 +412,64 @@ async def view_notepad(code: str):
                     }}, 2000);
                 }});
             }}
+            
+            function renderEntries(entries) {{
+                const container = document.getElementById('entriesContainer');
+                const countEl = document.getElementById('entryCount');
+                const emptyState = document.getElementById('emptyState');
+                
+                countEl.textContent = entries.length;
+                
+                if (entries.length === 0) {{
+                    if (!emptyState) {{
+                        container.innerHTML = `
+                            <div class="empty" id="emptyState">
+                                <div class="empty-icon">📋</div>
+                                <p>No entries yet</p>
+                                <p style="font-size: 0.9rem; color: #52525b;">Copy text on your phone and tap the capture button</p>
+                            </div>
+                        `;
+                    }}
+                    return;
+                }}
+                
+                // Only update if there are new entries
+                if (entries.length !== lastEntryCount) {{
+                    const reversedEntries = [...entries].reverse();
+                    container.innerHTML = reversedEntries.map((entry, index) => {{
+                        const isNew = index === 0 && entries.length > lastEntryCount;
+                        return `
+                            <div class="entry ${{isNew ? 'new-entry' : ''}}">
+                                <div class="entry-header">
+                                    <span class="timestamp">${{formatTime(entry.timestamp)}}</span>
+                                    <button class="copy-btn" onclick="copyText(this, ${{JSON.stringify(entry.text)}})">Copy</button>
+                                </div>
+                                <div class="text">${{escapeHtml(entry.text).replace(/\n/g, '<br>')}}</div>
+                            </div>
+                        `;
+                    }}).join('');
+                    lastEntryCount = entries.length;
+                }}
+            }}
+            
+            async function fetchEntries() {{
+                try {{
+                    const response = await fetch('/api/notepad/' + CODE);
+                    if (response.ok) {{
+                        const data = await response.json();
+                        renderEntries(data.entries);
+                        document.getElementById('statusText').textContent = 'Live updating';
+                    }}
+                }} catch (err) {{
+                    document.getElementById('statusText').textContent = 'Connection lost, retrying...';
+                }}
+            }}
+            
+            // Initial fetch
+            fetchEntries();
+            
+            // Poll every 3 seconds without refreshing the page
+            setInterval(fetchEntries, 3000);
         </script>
     </body>
     </html>
