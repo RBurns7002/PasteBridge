@@ -414,7 +414,8 @@ async def view_notepad(code: str):
         var CODE = '{notepad_code}';
         var lastCount = {entry_count};
         
-        function copyText(btn, text) {{
+        function copyFromData(btn) {{
+            var text = btn.getAttribute('data-text');
             navigator.clipboard.writeText(text).then(function() {{
                 btn.textContent = 'Copied!';
                 btn.classList.add('copied');
@@ -429,6 +430,10 @@ async def view_notepad(code: str):
             var div = document.createElement('div');
             div.textContent = str;
             return div.innerHTML;
+        }}
+        
+        function escapeAttr(str) {{
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }}
         
         function formatTime(ts) {{
@@ -451,9 +456,9 @@ async def view_notepad(code: str):
                 var html = '';
                 for (var i = entries.length - 1; i >= 0; i--) {{
                     var entry = entries[i];
-                    var textEscaped = escapeHtml(entry.text).replace(/\\n/g, '<br>');
-                    var textJson = JSON.stringify(entry.text);
-                    html += '<div class="entry"><div class="entry-header"><span class="timestamp">' + formatTime(entry.timestamp) + '</span><button class="copy-btn" onclick=\\'copyText(this, ' + textJson + ')\\'>Copy</button></div><div class="text">' + textEscaped + '</div></div>';
+                    var textDisplay = escapeHtml(entry.text).replace(/\\n/g, '<br>');
+                    var textData = escapeAttr(entry.text);
+                    html += '<div class="entry"><div class="entry-header"><span class="timestamp">' + formatTime(entry.timestamp) + '</span><button class="copy-btn" data-text="' + textData + '" onclick="copyFromData(this)">Copy</button></div><div class="text">' + textDisplay + '</div></div>';
                 }}
                 container.innerHTML = html;
                 lastCount = entries.length;
