@@ -285,15 +285,15 @@ async def view_notepad(code: str):
         time_str = timestamp.strftime("%H:%M:%S")
         # Escape HTML properly
         text = entry.get("text", "")
-        text_escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("\n", "<br>")
-        # For the copy button data attribute, we need to JSON encode the text
-        text_json = json.dumps(text)
+        text_display = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("\n", "<br>")
+        # For the data attribute, HTML-encode the text (including single quotes)
+        text_data = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
         entries_html += f'''<div class="entry">
             <div class="entry-header">
                 <span class="timestamp">{time_str}</span>
-                <button class="copy-btn" onclick='copyText(this, {text_json})'>Copy</button>
+                <button class="copy-btn" data-text="{text_data}" onclick="copyFromData(this)">Copy</button>
             </div>
-            <div class="text">{text_escaped}</div>
+            <div class="text">{text_display}</div>
         </div>'''
     
     if not entries_html:
