@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,9 +10,6 @@ import {
   Linking,
   Alert,
   Vibration,
-  Animated,
-  Dimensions,
-  PanResponder,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
@@ -22,7 +19,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const EXPO_PUBLIC_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 const STORAGE_KEY = 'pastebridge_session';
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface NotepadEntry {
   text: string;
@@ -44,57 +40,10 @@ export default function Index() {
   const [lastCaptured, setLastCaptured] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
-  const [bubbleMode, setBubbleMode] = useState(false);
-  
-  // Animation for floating bubble
-  const pan = useRef(new Animated.ValueXY({ x: SCREEN_WIDTH - 100, y: SCREEN_HEIGHT / 2 })).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   const webViewUrl = session
     ? `${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${session.code}/view`
     : '';
-
-  // Pulse animation for the bubble
-  useEffect(() => {
-    if (bubbleMode) {
-      const pulse = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.1,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-      pulse.start();
-      return () => pulse.stop();
-    }
-  }, [bubbleMode]);
-
-  // Pan responder for draggable bubble
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => {
-        pan.setOffset({
-          x: (pan.x as any)._value,
-          y: (pan.y as any)._value,
-        });
-      },
-      onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], {
-        useNativeDriver: false,
-      }),
-      onPanResponderRelease: () => {
-        pan.flattenOffset();
-      },
-    })
-  ).current;
 
   useEffect(() => {
     loadOrCreateSession();
@@ -147,7 +96,7 @@ export default function Index() {
     }
   };
 
-  const captureAndSend = async () => {
+  const captureAndSend = useCallback(async () => {
     if (!session) return;
 
     try {
@@ -193,7 +142,7 @@ export default function Index() {
     } finally {
       setSending(false);
     }
-  };
+  }, [session, lastCaptured]);
 
   const shareCode = async () => {
     if (!session) return;
@@ -256,75 +205,6 @@ export default function Index() {
     ]);
   };
 
-  // Floating Bubble Mode
-  if (bubbleMode && session) {
-    return (
-      <View style={styles.bubbleContainer}>
-        <StatusBar style="light" />
-        
-        {/* Exit bubble mode button */}
-        <TouchableOpacity
-          style={styles.exitBubbleBtn}
-          onPress={() => setBubbleMode(false)}
-        >
-          <Ionicons name="expand-outline" size={24} color="#60a5fa" />
-        </TouchableOpacity>
-
-        {/* Code display */}
-        <View style={styles.bubbleCodeContainer}>
-          <Text style={styles.bubbleCodeLabel}>Your Code:</Text>
-          <Text style={styles.bubbleCode}>{session.code}</Text>
-          <Text style={styles.bubbleHint}>Type this on your PC</Text>
-        </View>
-
-        {/* Floating capture button */}
-        <Animated.View
-          style={[
-            styles.floatingBubble,
-            {
-              transform: [
-                { translateX: pan.x },
-                { translateY: pan.y },
-                { scale: pulseAnim },
-              ],
-            },
-          ]}
-          {...panResponder.panHandlers}
-        >
-          <TouchableOpacity
-            style={[
-              styles.bubbleButton,
-              sending && styles.bubbleButtonSending,
-            ]}
-            onPress={captureAndSend}
-            disabled={sending}
-            activeOpacity={0.8}
-          >
-            {sending ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Ionicons name="clipboard" size={32} color="#fff" />
-            )}
-          </TouchableOpacity>
-        </Animated.View>
-
-        {/* Status message */}
-        {(error || successMessage) && (
-          <View style={styles.bubbleStatus}>
-            <Text style={[styles.bubbleStatusText, error ? styles.errorText : styles.successText]}>
-              {error || successMessage}
-            </Text>
-          </View>
-        )}
-
-        {/* Entry count */}
-        <View style={styles.bubbleEntryCount}>
-          <Text style={styles.entryCountText}>{session.entries.length} entries</Text>
-        </View>
-      </View>
-    );
-  }
-
   // Loading state
   if (loading) {
     return (
@@ -346,12 +226,6 @@ export default function Index() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>PasteBridge</Text>
-        <TouchableOpacity
-          style={styles.minimizeBtn}
-          onPress={() => setBubbleMode(true)}
-        >
-          <Ionicons name="contract-outline" size={22} color="#60a5fa" />
-        </TouchableOpacity>
       </View>
 
       {/* Code Display Card */}
@@ -414,16 +288,6 @@ export default function Index() {
         </View>
       )}
 
-      {/* Bubble Mode Prompt */}
-      <TouchableOpacity
-        style={styles.bubbleModePrompt}
-        onPress={() => setBubbleMode(true)}
-      >
-        <Ionicons name="apps" size={20} color="#60a5fa" />
-        <Text style={styles.bubbleModeText}>Switch to Mini Mode</Text>
-        <Ionicons name="chevron-forward" size={16} color="#60a5fa" />
-      </TouchableOpacity>
-
       {/* Bottom Actions */}
       <View style={styles.bottomActions}>
         <TouchableOpacity style={styles.bottomBtn} onPress={clearNotepad}>
@@ -440,10 +304,10 @@ export default function Index() {
       <View style={styles.instructions}>
         <Text style={styles.instructionsTitle}>How to use:</Text>
         <Text style={styles.instructionsText}>
-          1. Go to the website on your PC{'\n'}
-          2. Enter the code shown above{'\n'}
-          3. Copy text on your phone{'\n'}
-          4. Tap "Capture & Send"{'\n'}
+          1. Go to the website on your PC{"\n"}
+          2. Enter the code shown above{"\n"}
+          3. Copy text on your phone{"\n"}
+          4. Tap "Capture & Send"{"\n"}
           5. Text appears on your PC!
         </Text>
       </View>
@@ -468,7 +332,7 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 16,
@@ -477,11 +341,6 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: 'bold',
     color: '#60a5fa',
-  },
-  minimizeBtn: {
-    padding: 8,
-    backgroundColor: 'rgba(96, 165, 250, 0.1)',
-    borderRadius: 8,
   },
   codeCard: {
     marginHorizontal: 20,
@@ -537,11 +396,6 @@ const styles = StyleSheet.create({
     paddingVertical: 36,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 16,
-    elevation: 8,
   },
   captureButtonDisabled: {
     backgroundColor: '#1e3a5f',
@@ -573,29 +427,11 @@ const styles = StyleSheet.create({
     color: '#52525b',
     fontSize: 14,
   },
-  bubbleModePrompt: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 24,
-    marginHorizontal: 20,
-    paddingVertical: 14,
-    backgroundColor: 'rgba(96, 165, 250, 0.08)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(96, 165, 250, 0.2)',
-  },
-  bubbleModeText: {
-    color: '#60a5fa',
-    fontSize: 15,
-    fontWeight: '500',
-  },
   bottomActions: {
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 32,
-    marginTop: 24,
+    marginTop: 32,
   },
   bottomBtn: {
     alignItems: 'center',
@@ -623,92 +459,5 @@ const styles = StyleSheet.create({
     color: '#52525b',
     fontSize: 11,
     lineHeight: 18,
-  },
-
-  // Bubble Mode Styles
-  bubbleContainer: {
-    flex: 1,
-    backgroundColor: '#0f0f1a',
-  },
-  exitBubbleBtn: {
-    position: 'absolute',
-    top: 60,
-    right: 20,
-    padding: 12,
-    backgroundColor: 'rgba(96, 165, 250, 0.1)',
-    borderRadius: 12,
-    zIndex: 100,
-  },
-  bubbleCodeContainer: {
-    position: 'absolute',
-    top: 120,
-    left: 20,
-    right: 20,
-    alignItems: 'center',
-  },
-  bubbleCodeLabel: {
-    fontSize: 14,
-    color: '#71717a',
-    marginBottom: 8,
-  },
-  bubbleCode: {
-    fontSize: 48,
-    fontWeight: '700',
-    color: '#60a5fa',
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    letterSpacing: 3,
-  },
-  bubbleHint: {
-    fontSize: 14,
-    color: '#52525b',
-    marginTop: 8,
-  },
-  floatingBubble: {
-    position: 'absolute',
-    width: 80,
-    height: 80,
-  },
-  bubbleButton: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#3b82f6',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 12,
-    elevation: 10,
-  },
-  bubbleButtonSending: {
-    backgroundColor: '#1e3a5f',
-  },
-  bubbleStatus: {
-    position: 'absolute',
-    bottom: 120,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  bubbleStatusText: {
-    fontSize: 16,
-    fontWeight: '600',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 20,
-    overflow: 'hidden',
-  },
-  bubbleEntryCount: {
-    position: 'absolute',
-    bottom: 60,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  entryCountText: {
-    color: '#52525b',
-    fontSize: 14,
   },
 });
