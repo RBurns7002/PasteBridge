@@ -1,16 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
   ActivityIndicator,
   Share,
   Platform,
   Linking,
   Alert,
   Vibration,
+  Animated,
+  Dimensions,
+  PanResponder,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
@@ -20,6 +22,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const EXPO_PUBLIC_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 const STORAGE_KEY = 'pastebridge_session';
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface NotepadEntry {
   text: string;
@@ -28,7 +31,7 @@ interface NotepadEntry {
 
 interface NotepadSession {
   id: string;
-  slug: string;
+  code: string;
   entries: NotepadEntry[];
   created_at: string;
   updated_at: string;
@@ -41,12 +44,58 @@ export default function Index() {
   const [lastCaptured, setLastCaptured] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
+  const [bubbleMode, setBubbleMode] = useState(false);
+  
+  // Animation for floating bubble
+  const pan = useRef(new Animated.ValueXY({ x: SCREEN_WIDTH - 100, y: SCREEN_HEIGHT / 2 })).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   const webViewUrl = session
-    ? `${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${session.slug}/view`
+    ? `${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${session.code}/view`
     : '';
 
-  // Load or create session
+  // Pulse animation for the bubble
+  useEffect(() => {
+    if (bubbleMode) {
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.1,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulse.start();
+      return () => pulse.stop();
+    }
+  }, [bubbleMode]);
+
+  // Pan responder for draggable bubble
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        pan.setOffset({
+          x: (pan.x as any)._value,
+          y: (pan.y as any)._value,
+        });
+      },
+      onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], {
+        useNativeDriver: false,
+      }),
+      onPanResponderRelease: () => {
+        pan.flattenOffset();
+      },
+    })
+  ).current;
+
   useEffect(() => {
     loadOrCreateSession();
   }, []);
@@ -56,13 +105,11 @@ export default function Index() {
       setLoading(true);
       setError('');
 
-      // Try to load existing session
       const savedSession = await AsyncStorage.getItem(STORAGE_KEY);
       if (savedSession) {
         const parsed = JSON.parse(savedSession);
-        // Verify session still exists on server
         const response = await fetch(
-          `${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${parsed.slug}`
+          `${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${parsed.code}`
         );
         if (response.ok) {
           const data = await response.json();
@@ -72,11 +119,10 @@ export default function Index() {
         }
       }
 
-      // Create new session
       await createNewSession();
     } catch (err) {
       console.error('Error loading session:', err);
-      setError('Failed to connect. Please check your connection.');
+      setError('Failed to connect');
     } finally {
       setLoading(false);
     }
@@ -109,24 +155,21 @@ export default function Index() {
       setError('');
       setSuccessMessage('');
 
-      // Read clipboard
       const clipboardText = await Clipboard.getStringAsync();
 
       if (!clipboardText || clipboardText.trim() === '') {
-        setError('Clipboard is empty');
+        setError('Clipboard empty');
         Vibration.vibrate(100);
         return;
       }
 
-      // Don't send duplicate
       if (clipboardText === lastCaptured) {
-        setError('Already sent this text');
+        setError('Already sent');
         return;
       }
 
-      // Send to server
       const response = await fetch(
-        `${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${session.slug}/append`,
+        `${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${session.code}/append`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -140,101 +183,149 @@ export default function Index() {
       setSession(updatedNotepad);
       setLastCaptured(clipboardText);
       setSuccessMessage('Sent!');
-
-      // Haptic feedback
       Vibration.vibrate(50);
 
-      // Clear success message after 2 seconds
       setTimeout(() => setSuccessMessage(''), 2000);
     } catch (err) {
       console.error('Error capturing:', err);
-      setError('Failed to send. Please try again.');
+      setError('Failed to send');
       Vibration.vibrate(100);
     } finally {
       setSending(false);
     }
   };
 
-  const shareLink = async () => {
-    if (!webViewUrl) return;
-
+  const shareCode = async () => {
+    if (!session) return;
     try {
       await Share.share({
-        message: `View my clipboard notepad: ${webViewUrl}`,
-        url: webViewUrl,
+        message: `My PasteBridge code: ${session.code}\n\nOpen ${EXPO_PUBLIC_BACKEND_URL}/api/ and enter the code to view.`,
       });
     } catch (err) {
       console.error('Error sharing:', err);
     }
   };
 
-  const copyLink = async () => {
-    if (!webViewUrl) return;
-    await Clipboard.setStringAsync(webViewUrl);
-    setSuccessMessage('Link copied!');
+  const copyCode = async () => {
+    if (!session) return;
+    await Clipboard.setStringAsync(session.code);
+    setSuccessMessage('Code copied!');
     Vibration.vibrate(50);
     setTimeout(() => setSuccessMessage(''), 2000);
-  };
-
-  const openInBrowser = async () => {
-    if (!webViewUrl) return;
-    try {
-      await Linking.openURL(webViewUrl);
-    } catch (err) {
-      console.error('Error opening browser:', err);
-    }
   };
 
   const clearNotepad = async () => {
     if (!session) return;
 
-    Alert.alert(
-      'Clear Notepad',
-      'Are you sure you want to clear all entries?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await fetch(
-                `${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${session.slug}`,
-                { method: 'DELETE' }
-              );
-              setSession({ ...session, entries: [] });
-              setLastCaptured('');
-              setSuccessMessage('Cleared!');
-              setTimeout(() => setSuccessMessage(''), 2000);
-            } catch (err) {
-              setError('Failed to clear');
-            }
-          },
+    Alert.alert('Clear Notepad', 'Clear all entries?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Clear',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await fetch(
+              `${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${session.code}`,
+              { method: 'DELETE' }
+            );
+            setSession({ ...session, entries: [] });
+            setLastCaptured('');
+            setSuccessMessage('Cleared!');
+            setTimeout(() => setSuccessMessage(''), 2000);
+          } catch (err) {
+            setError('Failed to clear');
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
   const startNewSession = async () => {
-    Alert.alert(
-      'New Session',
-      'Start a new notepad session? This will create a new shareable link.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'New Session',
-          onPress: async () => {
-            setLoading(true);
-            await AsyncStorage.removeItem(STORAGE_KEY);
-            await createNewSession();
-            setLastCaptured('');
-            setLoading(false);
-          },
+    Alert.alert('New Session', 'Create new notepad with new code?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Create New',
+        onPress: async () => {
+          setLoading(true);
+          await AsyncStorage.removeItem(STORAGE_KEY);
+          await createNewSession();
+          setLastCaptured('');
+          setLoading(false);
         },
-      ]
-    );
+      },
+    ]);
   };
 
+  // Floating Bubble Mode
+  if (bubbleMode && session) {
+    return (
+      <View style={styles.bubbleContainer}>
+        <StatusBar style="light" />
+        
+        {/* Exit bubble mode button */}
+        <TouchableOpacity
+          style={styles.exitBubbleBtn}
+          onPress={() => setBubbleMode(false)}
+        >
+          <Ionicons name="expand-outline" size={24} color="#60a5fa" />
+        </TouchableOpacity>
+
+        {/* Code display */}
+        <View style={styles.bubbleCodeContainer}>
+          <Text style={styles.bubbleCodeLabel}>Your Code:</Text>
+          <Text style={styles.bubbleCode}>{session.code}</Text>
+          <Text style={styles.bubbleHint}>Type this on your PC</Text>
+        </View>
+
+        {/* Floating capture button */}
+        <Animated.View
+          style={[
+            styles.floatingBubble,
+            {
+              transform: [
+                { translateX: pan.x },
+                { translateY: pan.y },
+                { scale: pulseAnim },
+              ],
+            },
+          ]}
+          {...panResponder.panHandlers}
+        >
+          <TouchableOpacity
+            style={[
+              styles.bubbleButton,
+              sending && styles.bubbleButtonSending,
+            ]}
+            onPress={captureAndSend}
+            disabled={sending}
+            activeOpacity={0.8}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name="clipboard" size={32} color="#fff" />
+            )}
+          </TouchableOpacity>
+        </Animated.View>
+
+        {/* Status message */}
+        {(error || successMessage) && (
+          <View style={styles.bubbleStatus}>
+            <Text style={[styles.bubbleStatusText, error ? styles.errorText : styles.successText]}>
+              {error || successMessage}
+            </Text>
+          </View>
+        )}
+
+        {/* Entry count */}
+        <View style={styles.bubbleEntryCount}>
+          <Text style={styles.entryCountText}>{session.entries.length} entries</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // Loading state
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -247,6 +338,7 @@ export default function Index() {
     );
   }
 
+  // Main UI
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
@@ -254,19 +346,32 @@ export default function Index() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>PasteBridge</Text>
-        <Text style={styles.subtitle}>Clipboard to Web Notepad</Text>
+        <TouchableOpacity
+          style={styles.minimizeBtn}
+          onPress={() => setBubbleMode(true)}
+        >
+          <Ionicons name="contract-outline" size={22} color="#60a5fa" />
+        </TouchableOpacity>
       </View>
 
-      {/* Session Info */}
+      {/* Code Display Card */}
       {session && (
-        <View style={styles.sessionCard}>
-          <View style={styles.sessionHeader}>
-            <Ionicons name="link" size={18} color="#60a5fa" />
-            <Text style={styles.sessionSlug}>{session.slug}</Text>
+        <View style={styles.codeCard}>
+          <Text style={styles.codeLabel}>YOUR CODE</Text>
+          <TouchableOpacity onPress={copyCode} activeOpacity={0.7}>
+            <Text style={styles.codeText}>{session.code}</Text>
+          </TouchableOpacity>
+          <Text style={styles.codeHint}>Type this at the website on your PC</Text>
+          <View style={styles.codeActions}>
+            <TouchableOpacity style={styles.codeActionBtn} onPress={copyCode}>
+              <Ionicons name="copy-outline" size={18} color="#60a5fa" />
+              <Text style={styles.codeActionText}>Copy</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.codeActionBtn} onPress={shareCode}>
+              <Ionicons name="share-outline" size={18} color="#60a5fa" />
+              <Text style={styles.codeActionText}>Share</Text>
+            </TouchableOpacity>
           </View>
-          <Text style={styles.entriesCount}>
-            {session.entries.length} {session.entries.length === 1 ? 'entry' : 'entries'}
-          </Text>
         </View>
       )}
 
@@ -284,76 +389,50 @@ export default function Index() {
           <ActivityIndicator size="large" color="#ffffff" />
         ) : (
           <>
-            <Ionicons name="clipboard" size={48} color="#ffffff" />
+            <Ionicons name="send" size={48} color="#ffffff" />
             <Text style={styles.captureButtonText}>Capture & Send</Text>
-            <Text style={styles.captureButtonHint}>Tap to send clipboard</Text>
           </>
         )}
       </TouchableOpacity>
 
-      {/* Status Messages */}
+      {/* Status */}
       {error ? (
-        <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle" size={20} color="#ef4444" />
+        <View style={styles.statusContainer}>
+          <Ionicons name="alert-circle" size={18} color="#ef4444" />
           <Text style={styles.errorText}>{error}</Text>
         </View>
-      ) : null}
-
-      {successMessage ? (
-        <View style={styles.successContainer}>
-          <Ionicons name="checkmark-circle" size={20} color="#22c55e" />
+      ) : successMessage ? (
+        <View style={styles.statusContainer}>
+          <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
           <Text style={styles.successText}>{successMessage}</Text>
         </View>
-      ) : null}
+      ) : (
+        <View style={styles.statusContainer}>
+          <Text style={styles.hintText}>
+            {session?.entries.length || 0} entries sent
+          </Text>
+        </View>
+      )}
 
-      {/* Action Buttons */}
-      <View style={styles.actionButtons}>
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={copyLink}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="copy-outline" size={24} color="#60a5fa" />
-          <Text style={styles.actionButtonText}>Copy Link</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={shareLink}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="share-outline" size={24} color="#60a5fa" />
-          <Text style={styles.actionButtonText}>Share</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={openInBrowser}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="open-outline" size={24} color="#60a5fa" />
-          <Text style={styles.actionButtonText}>Open Web</Text>
-        </TouchableOpacity>
-      </View>
+      {/* Bubble Mode Prompt */}
+      <TouchableOpacity
+        style={styles.bubbleModePrompt}
+        onPress={() => setBubbleMode(true)}
+      >
+        <Ionicons name="apps" size={20} color="#60a5fa" />
+        <Text style={styles.bubbleModeText}>Switch to Mini Mode</Text>
+        <Ionicons name="chevron-forward" size={16} color="#60a5fa" />
+      </TouchableOpacity>
 
       {/* Bottom Actions */}
       <View style={styles.bottomActions}>
-        <TouchableOpacity
-          style={styles.bottomButton}
-          onPress={clearNotepad}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="trash-outline" size={20} color="#a1a1aa" />
-          <Text style={styles.bottomButtonText}>Clear Notepad</Text>
+        <TouchableOpacity style={styles.bottomBtn} onPress={clearNotepad}>
+          <Ionicons name="trash-outline" size={20} color="#71717a" />
+          <Text style={styles.bottomBtnText}>Clear</Text>
         </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.bottomButton}
-          onPress={startNewSession}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="add-circle-outline" size={20} color="#a1a1aa" />
-          <Text style={styles.bottomButtonText}>New Session</Text>
+        <TouchableOpacity style={styles.bottomBtn} onPress={startNewSession}>
+          <Ionicons name="add-circle-outline" size={20} color="#71717a" />
+          <Text style={styles.bottomBtnText}>New Code</Text>
         </TouchableOpacity>
       </View>
 
@@ -361,10 +440,11 @@ export default function Index() {
       <View style={styles.instructions}>
         <Text style={styles.instructionsTitle}>How to use:</Text>
         <Text style={styles.instructionsText}>
-          1. Open the web notepad link on your computer{"\n"}
-          2. Copy any text on your phone{"\n"}
-          3. Tap "Capture & Send" button{"\n"}
-          4. Text appears on the web notepad!
+          1. Go to the website on your PC{'\n'}
+          2. Enter the code shown above{'\n'}
+          3. Copy text on your phone{'\n'}
+          4. Tap "Capture & Send"{'\n'}
+          5. Text appears on your PC!
         </Text>
       </View>
     </SafeAreaView>
@@ -387,49 +467,74 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 24,
     paddingHorizontal: 20,
+    paddingVertical: 16,
   },
   title: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#60a5fa',
-    marginBottom: 4,
   },
-  subtitle: {
-    fontSize: 14,
-    color: '#a1a1aa',
-  },
-  sessionCard: {
-    marginHorizontal: 20,
+  minimizeBtn: {
+    padding: 8,
     backgroundColor: 'rgba(96, 165, 250, 0.1)',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
+    borderRadius: 8,
   },
-  sessionHeader: {
+  codeCard: {
+    marginHorizontal: 20,
+    backgroundColor: 'rgba(96, 165, 250, 0.08)',
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(96, 165, 250, 0.2)',
+  },
+  codeLabel: {
+    fontSize: 12,
+    color: '#71717a',
+    letterSpacing: 2,
+    marginBottom: 8,
+  },
+  codeText: {
+    fontSize: 36,
+    fontWeight: '700',
+    color: '#60a5fa',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    letterSpacing: 2,
+  },
+  codeHint: {
+    fontSize: 13,
+    color: '#52525b',
+    marginTop: 8,
+  },
+  codeActions: {
+    flexDirection: 'row',
+    gap: 16,
+    marginTop: 16,
+  },
+  codeActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(96, 165, 250, 0.1)',
+    borderRadius: 8,
   },
-  sessionSlug: {
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    fontSize: 18,
+  codeActionText: {
     color: '#60a5fa',
-    fontWeight: '600',
-  },
-  entriesCount: {
-    fontSize: 13,
-    color: '#71717a',
-    marginLeft: 26,
+    fontSize: 14,
+    fontWeight: '500',
   },
   captureButton: {
     marginHorizontal: 20,
+    marginTop: 32,
     backgroundColor: '#3b82f6',
     borderRadius: 24,
-    paddingVertical: 40,
+    paddingVertical: 36,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#3b82f6',
@@ -443,95 +548,167 @@ const styles = StyleSheet.create({
   },
   captureButtonText: {
     color: '#ffffff',
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 'bold',
     marginTop: 12,
   },
-  captureButtonHint: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 14,
-    marginTop: 4,
-  },
-  errorContainer: {
+  statusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     marginTop: 16,
-    paddingHorizontal: 20,
+    height: 24,
   },
   errorText: {
     color: '#ef4444',
     fontSize: 14,
-  },
-  successContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 16,
-    paddingHorizontal: 20,
   },
   successText: {
     color: '#22c55e',
     fontSize: 14,
     fontWeight: '600',
   },
-  actionButtons: {
+  hintText: {
+    color: '#52525b',
+    fontSize: 14,
+  },
+  bubbleModePrompt: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 12,
-    marginTop: 32,
-    paddingHorizontal: 20,
-  },
-  actionButton: {
-    flex: 1,
-    backgroundColor: 'rgba(96, 165, 250, 0.1)',
-    borderRadius: 12,
-    paddingVertical: 16,
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 24,
+    marginHorizontal: 20,
+    paddingVertical: 14,
+    backgroundColor: 'rgba(96, 165, 250, 0.08)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(96, 165, 250, 0.2)',
   },
-  actionButtonText: {
+  bubbleModeText: {
     color: '#60a5fa',
-    fontSize: 12,
+    fontSize: 15,
     fontWeight: '500',
   },
   bottomActions: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 24,
+    gap: 32,
     marginTop: 24,
-    paddingHorizontal: 20,
   },
-  bottomButton: {
-    flexDirection: 'row',
+  bottomBtn: {
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    gap: 4,
   },
-  bottomButtonText: {
-    color: '#a1a1aa',
-    fontSize: 14,
+  bottomBtnText: {
+    color: '#71717a',
+    fontSize: 12,
   },
   instructions: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     padding: 20,
   },
   instructionsTitle: {
-    color: '#a1a1aa',
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  instructionsText: {
     color: '#71717a',
     fontSize: 12,
-    lineHeight: 20,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  instructionsText: {
+    color: '#52525b',
+    fontSize: 11,
+    lineHeight: 18,
+  },
+
+  // Bubble Mode Styles
+  bubbleContainer: {
+    flex: 1,
+    backgroundColor: '#0f0f1a',
+  },
+  exitBubbleBtn: {
+    position: 'absolute',
+    top: 60,
+    right: 20,
+    padding: 12,
+    backgroundColor: 'rgba(96, 165, 250, 0.1)',
+    borderRadius: 12,
+    zIndex: 100,
+  },
+  bubbleCodeContainer: {
+    position: 'absolute',
+    top: 120,
+    left: 20,
+    right: 20,
+    alignItems: 'center',
+  },
+  bubbleCodeLabel: {
+    fontSize: 14,
+    color: '#71717a',
+    marginBottom: 8,
+  },
+  bubbleCode: {
+    fontSize: 48,
+    fontWeight: '700',
+    color: '#60a5fa',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    letterSpacing: 3,
+  },
+  bubbleHint: {
+    fontSize: 14,
+    color: '#52525b',
+    marginTop: 8,
+  },
+  floatingBubble: {
+    position: 'absolute',
+    width: 80,
+    height: 80,
+  },
+  bubbleButton: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#3b82f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#3b82f6',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  bubbleButtonSending: {
+    backgroundColor: '#1e3a5f',
+  },
+  bubbleStatus: {
+    position: 'absolute',
+    bottom: 120,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  bubbleStatusText: {
+    fontSize: 16,
+    fontWeight: '600',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  bubbleEntryCount: {
+    position: 'absolute',
+    bottom: 60,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  entryCountText: {
+    color: '#52525b',
+    fontSize: 14,
   },
 });
