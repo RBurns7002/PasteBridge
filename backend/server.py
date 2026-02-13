@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -11,6 +11,7 @@ from typing import List, Optional
 import uuid
 from datetime import datetime
 import random
+import json
 
 
 ROOT_DIR = Path(__file__).parent
@@ -45,7 +46,7 @@ NOUNS = [
 
 
 def generate_memorable_code():
-    """Generate a short, memorable code like 'red-tiger-42'"""
+    """Generate a short, memorable code like 'redtiger42'"""
     adj = random.choice(ADJECTIVES)
     noun = random.choice(NOUNS)
     num = random.randint(10, 99)
@@ -155,325 +156,327 @@ async def clear_notepad(code: str):
 @api_router.get("/", response_class=HTMLResponse)
 async def landing_page():
     """Landing page where users enter their code"""
-    html_content = '''
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>PasteBridge - Clipboard to PC</title>
-        <style>
-            * { box-sizing: border-box; margin: 0; padding: 0; }
-            body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
-                min-height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                color: #e4e4e7;
-                padding: 20px;
-            }
-            .container { max-width: 480px; width: 100%; text-align: center; }
-            .logo { font-size: 3rem; margin-bottom: 8px; }
-            h1 { font-size: 2.5rem; color: #60a5fa; margin-bottom: 8px; font-weight: 700; }
-            .tagline { color: #a1a1aa; font-size: 1.1rem; margin-bottom: 48px; }
-            .card {
-                background: rgba(255,255,255,0.05);
-                border-radius: 20px;
-                padding: 40px 32px;
-                backdrop-filter: blur(10px);
-                border: 1px solid rgba(255,255,255,0.1);
-            }
-            .card h2 { font-size: 1.2rem; color: #d4d4d8; margin-bottom: 24px; font-weight: 500; }
-            .code-input {
-                width: 100%;
-                padding: 16px 20px;
-                font-size: 1.5rem;
-                text-align: center;
-                background: rgba(0,0,0,0.3);
-                border: 2px solid rgba(96, 165, 250, 0.3);
-                border-radius: 12px;
-                color: #ffffff;
-                font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-                letter-spacing: 2px;
-                outline: none;
-                transition: all 0.2s;
-            }
-            .code-input:focus { border-color: #60a5fa; box-shadow: 0 0 20px rgba(96, 165, 250, 0.2); }
-            .code-input::placeholder { color: #52525b; letter-spacing: 1px; }
-            .submit-btn {
-                width: 100%;
-                padding: 16px;
-                font-size: 1.1rem;
-                font-weight: 600;
-                background: #3b82f6;
-                color: white;
-                border: none;
-                border-radius: 12px;
-                cursor: pointer;
-                margin-top: 16px;
-                transition: all 0.2s;
-            }
-            .submit-btn:hover { background: #2563eb; transform: translateY(-1px); }
-            .error { color: #ef4444; margin-top: 16px; font-size: 0.95rem; display: none; }
-            .error.show { display: block; }
-            .example { margin-top: 24px; color: #71717a; font-size: 0.85rem; }
-            .example code { background: rgba(96, 165, 250, 0.1); padding: 4px 8px; border-radius: 4px; color: #60a5fa; }
-            .footer { margin-top: 32px; color: #52525b; font-size: 0.8rem; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="logo">📋</div>
-            <h1>PasteBridge</h1>
-            <p class="tagline">Phone clipboard → PC notepad</p>
-            <div class="card">
-                <h2>Enter your notepad code</h2>
-                <form id="codeForm" onsubmit="handleSubmit(event)">
-                    <input type="text" id="codeInput" class="code-input" placeholder="redtiger42" autocomplete="off" autocapitalize="none" spellcheck="false" />
-                    <button type="submit" class="submit-btn">View Notepad</button>
-                </form>
-                <p id="error" class="error"></p>
-                <p class="example">Example: <code>suntiger42</code></p>
-            </div>
-            <p class="footer">Get the code from the PasteBridge app on your phone</p>
+    html_content = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PasteBridge - Clipboard to PC</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #e4e4e7;
+            padding: 20px;
+        }
+        .container { max-width: 480px; width: 100%; text-align: center; }
+        .logo { font-size: 3rem; margin-bottom: 8px; }
+        h1 { font-size: 2.5rem; color: #60a5fa; margin-bottom: 8px; font-weight: 700; }
+        .tagline { color: #a1a1aa; font-size: 1.1rem; margin-bottom: 48px; }
+        .card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 20px;
+            padding: 40px 32px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .card h2 { font-size: 1.2rem; color: #d4d4d8; margin-bottom: 24px; font-weight: 500; }
+        .code-input {
+            width: 100%;
+            padding: 16px 20px;
+            font-size: 1.5rem;
+            text-align: center;
+            background: rgba(0,0,0,0.3);
+            border: 2px solid rgba(96, 165, 250, 0.3);
+            border-radius: 12px;
+            color: #ffffff;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            letter-spacing: 2px;
+            outline: none;
+            transition: all 0.2s;
+        }
+        .code-input:focus { border-color: #60a5fa; box-shadow: 0 0 20px rgba(96, 165, 250, 0.2); }
+        .code-input::placeholder { color: #52525b; letter-spacing: 1px; }
+        .submit-btn {
+            width: 100%;
+            padding: 16px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            margin-top: 16px;
+            transition: all 0.2s;
+        }
+        .submit-btn:hover { background: #2563eb; transform: translateY(-1px); }
+        .error { color: #ef4444; margin-top: 16px; font-size: 0.95rem; display: none; }
+        .error.show { display: block; }
+        .example { margin-top: 24px; color: #71717a; font-size: 0.85rem; }
+        .example code { background: rgba(96, 165, 250, 0.1); padding: 4px 8px; border-radius: 4px; color: #60a5fa; }
+        .footer { margin-top: 32px; color: #52525b; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">📋</div>
+        <h1>PasteBridge</h1>
+        <p class="tagline">Phone clipboard → PC notepad</p>
+        <div class="card">
+            <h2>Enter your notepad code</h2>
+            <form id="codeForm" onsubmit="handleSubmit(event)">
+                <input type="text" id="codeInput" class="code-input" placeholder="redtiger42" autocomplete="off" autocapitalize="none" spellcheck="false" />
+                <button type="submit" class="submit-btn">View Notepad</button>
+            </form>
+            <p id="error" class="error"></p>
+            <p class="example">Example: <code>suntiger42</code></p>
         </div>
-        <script>
-            async function handleSubmit(e) {
-                e.preventDefault();
-                const code = document.getElementById('codeInput').value.trim().toLowerCase();
-                const errorEl = document.getElementById('error');
-                if (!code) { errorEl.textContent = 'Please enter a code'; errorEl.classList.add('show'); return; }
-                errorEl.classList.remove('show');
-                try {
-                    const response = await fetch('/api/notepad/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
-                    if (response.ok) { window.location.href = '/api/notepad/' + code + '/view'; }
-                    else { const data = await response.json(); errorEl.textContent = data.detail || 'Notepad not found.'; errorEl.classList.add('show'); }
-                } catch (err) { errorEl.textContent = 'Connection error. Please try again.'; errorEl.classList.add('show'); }
-            }
-            document.getElementById('codeInput').focus();
-        </script>
-    </body>
-    </html>
-    '''
+        <p class="footer">Get the code from the PasteBridge app on your phone</p>
+    </div>
+    <script>
+        async function handleSubmit(e) {
+            e.preventDefault();
+            var code = document.getElementById('codeInput').value.trim().toLowerCase();
+            var errorEl = document.getElementById('error');
+            if (!code) { errorEl.textContent = 'Please enter a code'; errorEl.classList.add('show'); return; }
+            errorEl.classList.remove('show');
+            try {
+                var response = await fetch('/api/notepad/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: code }) });
+                if (response.ok) { window.location.href = '/api/notepad/' + code + '/view'; }
+                else { var data = await response.json(); errorEl.textContent = data.detail || 'Notepad not found.'; errorEl.classList.add('show'); }
+            } catch (err) { errorEl.textContent = 'Connection error. Please try again.'; errorEl.classList.add('show'); }
+        }
+        document.getElementById('codeInput').focus();
+    </script>
+</body>
+</html>'''
     return HTMLResponse(content=html_content)
 
 
-# Web View Route - HTML page for viewing notepad (NO auto-refresh, uses JS polling)
+# Web View Route - HTML page for viewing notepad
 @api_router.get("/notepad/{code}/view", response_class=HTMLResponse)
 async def view_notepad(code: str):
     """Web view of notepad - uses JavaScript polling to update without page refresh"""
     notepad = await db.notepads.find_one({"code": code.lower()})
     if not notepad:
         return HTMLResponse(
-            content="""<!DOCTYPE html><html><head><title>Not Found</title>
+            content='''<!DOCTYPE html><html><head><title>Not Found</title>
             <style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0f0f1a;color:#fff;}
             .container{text-align:center;}h1{color:#ef4444;}a{color:#60a5fa;}</style></head>
             <body><div class="container"><h1>Notepad not found</h1><p>Check your code and try again.</p>
-            <p><a href="/api/">← Back to home</a></p></div></body></html>""",
+            <p><a href="/api/">← Back to home</a></p></div></body></html>''',
             status_code=404
         )
     
-    html_content = f'''
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>PasteBridge - {notepad.get("code")}</title>
-        <style>
-            * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-            body {{
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
-                min-height: 100vh;
-                color: #e4e4e7;
-                padding: 20px;
-            }}
-            .container {{ max-width: 800px; margin: 0 auto; }}
-            .header {{
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                padding: 20px 0;
-                border-bottom: 1px solid rgba(255,255,255,0.1);
-                margin-bottom: 24px;
-            }}
-            .header-left h1 {{ font-size: 1.5rem; color: #60a5fa; margin-bottom: 4px; }}
-            .code-badge {{
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                font-family: 'SF Mono', Monaco, monospace;
-                background: rgba(96, 165, 250, 0.15);
-                padding: 8px 16px;
-                border-radius: 20px;
-                font-size: 1.1rem;
-                color: #60a5fa;
-                font-weight: 600;
-            }}
-            .status {{
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                font-size: 0.85rem;
-                color: #71717a;
-                margin-bottom: 20px;
-            }}
-            .status .dot {{
-                width: 8px;
-                height: 8px;
-                background: #22c55e;
-                border-radius: 50%;
-                animation: pulse 2s infinite;
-            }}
-            @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.5; }} }}
-            .stats {{ text-align: right; }}
-            .stats .count {{ font-size: 1.5rem; font-weight: 700; color: #ffffff; }}
-            .stats .label {{ font-size: 0.8rem; color: #71717a; }}
-            .entries {{ display: flex; flex-direction: column; gap: 12px; }}
-            .entry {{
-                background: rgba(255,255,255,0.05);
-                border-radius: 12px;
-                padding: 16px;
-                border-left: 3px solid #60a5fa;
-            }}
-            .entry-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }}
-            .timestamp {{ font-size: 0.75rem; color: #71717a; font-family: monospace; }}
-            .copy-btn {{
-                background: rgba(96, 165, 250, 0.2);
-                border: none;
-                color: #60a5fa;
-                padding: 4px 12px;
-                border-radius: 6px;
-                font-size: 0.75rem;
-                cursor: pointer;
-            }}
-            .copy-btn:hover {{ background: rgba(96, 165, 250, 0.3); }}
-            .copy-btn.copied {{ background: #22c55e; color: white; }}
-            .text {{ font-size: 1rem; line-height: 1.6; word-break: break-word; white-space: pre-wrap; color: #f4f4f5; }}
-            .empty {{ text-align: center; padding: 80px 20px; color: #71717a; }}
-            .empty-icon {{ font-size: 4rem; margin-bottom: 16px; opacity: 0.5; }}
-            .empty p {{ font-size: 1.2rem; margin-bottom: 8px; }}
-            .back-link {{ display: inline-block; margin-top: 24px; color: #60a5fa; text-decoration: none; font-size: 0.9rem; }}
-            .back-link:hover {{ text-decoration: underline; }}
-            .new-entry {{ animation: slideIn 0.3s ease-out; }}
-            @keyframes slideIn {{ from {{ opacity: 0; transform: translateY(-10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <div class="header-left">
-                    <h1>PasteBridge</h1>
-                    <div class="code-badge">🔗 {notepad.get("code")}</div>
-                </div>
-                <div class="stats">
-                    <div class="count" id="entryCount">0</div>
-                    <div class="label">entries</div>
-                </div>
+    notepad_code = notepad.get("code")
+    
+    # Pre-render the initial entries server-side
+    entries_html = ""
+    for entry in reversed(notepad.get("entries", [])):
+        timestamp = entry.get("timestamp", datetime.utcnow())
+        if isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        time_str = timestamp.strftime("%H:%M:%S")
+        # Escape HTML properly
+        text = entry.get("text", "")
+        text_escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("\n", "<br>")
+        # For the copy button data attribute, we need to JSON encode the text
+        text_json = json.dumps(text)
+        entries_html += f'''<div class="entry">
+            <div class="entry-header">
+                <span class="timestamp">{time_str}</span>
+                <button class="copy-btn" onclick='copyText(this, {text_json})'>Copy</button>
             </div>
-            <div class="status">
-                <span class="dot"></span>
-                <span id="statusText">Live updating</span>
+            <div class="text">{text_escaped}</div>
+        </div>'''
+    
+    if not entries_html:
+        entries_html = '''<div class="empty" id="emptyState">
+            <div class="empty-icon">📋</div>
+            <p>No entries yet</p>
+            <p style="font-size: 0.9rem; color: #52525b;">Copy text on your phone and tap the capture button</p>
+        </div>'''
+    
+    entry_count = len(notepad.get("entries", []))
+    
+    html_content = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PasteBridge - {notepad_code}</title>
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+            min-height: 100vh;
+            color: #e4e4e7;
+            padding: 20px;
+        }}
+        .container {{ max-width: 800px; margin: 0 auto; }}
+        .header {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 24px;
+        }}
+        .header-left h1 {{ font-size: 1.5rem; color: #60a5fa; margin-bottom: 4px; }}
+        .code-badge {{
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'SF Mono', Monaco, monospace;
+            background: rgba(96, 165, 250, 0.15);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 1.1rem;
+            color: #60a5fa;
+            font-weight: 600;
+        }}
+        .status {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            color: #71717a;
+            margin-bottom: 20px;
+        }}
+        .status .dot {{
+            width: 8px;
+            height: 8px;
+            background: #22c55e;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }}
+        @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.5; }} }}
+        .stats {{ text-align: right; }}
+        .stats .count {{ font-size: 1.5rem; font-weight: 700; color: #ffffff; }}
+        .stats .label {{ font-size: 0.8rem; color: #71717a; }}
+        .entries {{ display: flex; flex-direction: column; gap: 12px; }}
+        .entry {{
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 16px;
+            border-left: 3px solid #60a5fa;
+        }}
+        .entry-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }}
+        .timestamp {{ font-size: 0.75rem; color: #71717a; font-family: monospace; }}
+        .copy-btn {{
+            background: rgba(96, 165, 250, 0.2);
+            border: none;
+            color: #60a5fa;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }}
+        .copy-btn:hover {{ background: rgba(96, 165, 250, 0.3); }}
+        .copy-btn.copied {{ background: #22c55e; color: white; }}
+        .text {{ font-size: 1rem; line-height: 1.6; word-break: break-word; white-space: pre-wrap; color: #f4f4f5; }}
+        .empty {{ text-align: center; padding: 80px 20px; color: #71717a; }}
+        .empty-icon {{ font-size: 4rem; margin-bottom: 16px; opacity: 0.5; }}
+        .empty p {{ font-size: 1.2rem; margin-bottom: 8px; }}
+        .back-link {{ display: inline-block; margin-top: 24px; color: #60a5fa; text-decoration: none; font-size: 0.9rem; }}
+        .back-link:hover {{ text-decoration: underline; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-left">
+                <h1>PasteBridge</h1>
+                <div class="code-badge">🔗 {notepad_code}</div>
             </div>
-            <div class="entries" id="entriesContainer">
-                <div class="empty" id="emptyState">
-                    <div class="empty-icon">📋</div>
-                    <p>No entries yet</p>
-                    <p style="font-size: 0.9rem; color: #52525b;">Copy text on your phone and tap the capture button</p>
-                </div>
+            <div class="stats">
+                <div class="count" id="entryCount">{entry_count}</div>
+                <div class="label">entries</div>
             </div>
-            <a href="/api/" class="back-link">← Enter different code</a>
         </div>
-        <script>
-            const CODE = '{notepad.get("code")}';
-            let lastEntryCount = 0;
+        <div class="status">
+            <span class="dot"></span>
+            <span id="statusText">Live updating</span>
+        </div>
+        <div class="entries" id="entriesContainer">
+            {entries_html}
+        </div>
+        <a href="/api/" class="back-link">← Enter different code</a>
+    </div>
+    <script>
+        var CODE = '{notepad_code}';
+        var lastCount = {entry_count};
+        
+        function copyText(btn, text) {{
+            navigator.clipboard.writeText(text).then(function() {{
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(function() {{
+                    btn.textContent = 'Copy';
+                    btn.classList.remove('copied');
+                }}, 2000);
+            }});
+        }}
+        
+        function escapeHtml(str) {{
+            var div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }}
+        
+        function formatTime(ts) {{
+            var d = new Date(ts);
+            return d.toLocaleTimeString('en-US', {{ hour12: false }});
+        }}
+        
+        function renderEntries(entries) {{
+            var container = document.getElementById('entriesContainer');
+            var countEl = document.getElementById('entryCount');
+            countEl.textContent = entries.length;
             
-            function escapeHtml(text) {{
-                const div = document.createElement('div');
-                div.textContent = text;
-                return div.innerHTML;
+            if (entries.length === 0) {{
+                container.innerHTML = '<div class="empty"><div class="empty-icon">📋</div><p>No entries yet</p><p style="font-size:0.9rem;color:#52525b;">Copy text on your phone and tap the capture button</p></div>';
+                return;
             }}
             
-            function formatTime(timestamp) {{
-                const date = new Date(timestamp);
-                return date.toLocaleTimeString('en-US', {{ hour12: false }});
+            // Only re-render if count changed
+            if (entries.length !== lastCount) {{
+                var html = '';
+                for (var i = entries.length - 1; i >= 0; i--) {{
+                    var entry = entries[i];
+                    var textEscaped = escapeHtml(entry.text).replace(/\\n/g, '<br>');
+                    var textJson = JSON.stringify(entry.text);
+                    html += '<div class="entry"><div class="entry-header"><span class="timestamp">' + formatTime(entry.timestamp) + '</span><button class="copy-btn" onclick=\\'copyText(this, ' + textJson + ')\\'>Copy</button></div><div class="text">' + textEscaped + '</div></div>';
+                }}
+                container.innerHTML = html;
+                lastCount = entries.length;
             }}
-            
-            function copyText(btn, text) {{
-                navigator.clipboard.writeText(text).then(() => {{
-                    btn.textContent = 'Copied!';
-                    btn.classList.add('copied');
-                    setTimeout(() => {{
-                        btn.textContent = 'Copy';
-                        btn.classList.remove('copied');
-                    }}, 2000);
+        }}
+        
+        function poll() {{
+            fetch('/api/notepad/' + CODE)
+                .then(function(r) {{ return r.json(); }})
+                .then(function(data) {{
+                    renderEntries(data.entries);
+                    document.getElementById('statusText').textContent = 'Live updating';
+                }})
+                .catch(function() {{
+                    document.getElementById('statusText').textContent = 'Reconnecting...';
                 }});
-            }}
-            
-            function renderEntries(entries) {{
-                const container = document.getElementById('entriesContainer');
-                const countEl = document.getElementById('entryCount');
-                const emptyState = document.getElementById('emptyState');
-                
-                countEl.textContent = entries.length;
-                
-                if (entries.length === 0) {{
-                    if (!emptyState) {{
-                        container.innerHTML = `
-                            <div class="empty" id="emptyState">
-                                <div class="empty-icon">📋</div>
-                                <p>No entries yet</p>
-                                <p style="font-size: 0.9rem; color: #52525b;">Copy text on your phone and tap the capture button</p>
-                            </div>
-                        `;
-                    }}
-                    return;
-                }}
-                
-                // Only update if there are new entries
-                if (entries.length !== lastEntryCount) {{
-                    const reversedEntries = [...entries].reverse();
-                    container.innerHTML = reversedEntries.map((entry, index) => {{
-                        const isNew = index === 0 && entries.length > lastEntryCount;
-                        return `
-                            <div class="entry ${{isNew ? 'new-entry' : ''}}">
-                                <div class="entry-header">
-                                    <span class="timestamp">${{formatTime(entry.timestamp)}}</span>
-                                    <button class="copy-btn" onclick="copyText(this, ${{JSON.stringify(entry.text)}})">Copy</button>
-                                </div>
-                                <div class="text">${{escapeHtml(entry.text).replace(/\n/g, '<br>')}}</div>
-                            </div>
-                        `;
-                    }}).join('');
-                    lastEntryCount = entries.length;
-                }}
-            }}
-            
-            async function fetchEntries() {{
-                try {{
-                    const response = await fetch('/api/notepad/' + CODE);
-                    if (response.ok) {{
-                        const data = await response.json();
-                        renderEntries(data.entries);
-                        document.getElementById('statusText').textContent = 'Live updating';
-                    }}
-                }} catch (err) {{
-                    document.getElementById('statusText').textContent = 'Connection lost, retrying...';
-                }}
-            }}
-            
-            // Initial fetch
-            fetchEntries();
-            
-            // Poll every 3 seconds without refreshing the page
-            setInterval(fetchEntries, 3000);
-        </script>
-    </body>
-    </html>
-    '''
+        }}
+        
+        // Poll every 3 seconds
+        setInterval(poll, 3000);
+    </script>
+</body>
+</html>'''
     
     return HTMLResponse(content=html_content)
 
