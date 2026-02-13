@@ -289,8 +289,9 @@ def test_html_view(slug):
             
         content = response.text
         
-        # Validate HTML content
-        if not content.startswith('<!DOCTYPE html>'):
+        # Validate HTML content (strip leading whitespace)
+        content_stripped = content.strip()
+        if not content_stripped.startswith('<!DOCTYPE html>'):
             log_test("HTML View", "FAIL", "Response is not valid HTML")
             return False
             
