@@ -24,17 +24,21 @@ Transform PasteBridge from a simple clipboard-to-web tool into a comprehensive c
 
 ---
 
-## Phase 2: Guest Account Limits (Next)
-**Status: PLANNED**
-**Target: Sprint 2**
+## Phase 2: Guest Account Limits ✅ (Current - Complete)
+**Status: COMPLETE**
 
-### Features:
-- [ ] Add `expires_at` field to notepad schema (90 days from creation)
-- [ ] Add `account_type` field (guest/user) to notepads
-- [ ] Display expiration warning in app (< 7 days remaining)
-- [ ] Display expiration info in web view
-- [ ] Backend scheduled task for cleanup of expired notepads
-- [ ] Grace period notifications before deletion
+### Features Implemented:
+- [x] Add `expires_at` field to notepad schema (90 days from creation)
+- [x] Add `account_type` field (guest/user/premium) to notepads
+- [x] Display expiration warning in app (< 7 days remaining)
+- [x] Display expiration info in web view (banner with date and days remaining)
+- [x] Backend returns expiration info in API responses
+- [x] Handle expired notepads (410 Gone response)
+- [x] Admin stats endpoint for monitoring
+- [x] Admin cleanup endpoint for expired notepads
+- [x] Warning banner styling (amber color) for expiring soon notepads
+- [x] History modal shows days remaining for each notepad
+- [x] "Expiring" badge on notepads close to expiration
 
 ### Backend Changes:
 ```python
@@ -44,9 +48,9 @@ class Notepad(BaseModel):
     expires_at: datetime = Field(default_factory=lambda: datetime.utcnow() + timedelta(days=90))
 ```
 
-### API Endpoints:
-- `GET /api/notepad/{code}/expiration` - Get expiration info
-- `POST /api/admin/cleanup-expired` - Cleanup job endpoint
+### API Endpoints Added:
+- `GET /api/admin/stats` - Get notepad statistics
+- `POST /api/admin/cleanup-expired` - Cleanup expired notepads
 
 ---
 
