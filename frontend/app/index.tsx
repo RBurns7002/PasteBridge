@@ -21,6 +21,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const EXPO_PUBLIC_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 const STORAGE_KEY = 'pastebridge_current_session';
 const HISTORY_KEY = 'pastebridge_notepad_history';
+const EXPIRATION_WARNING_DAYS = 7;
 
 interface NotepadEntry {
   text: string;
@@ -33,6 +34,10 @@ interface NotepadSession {
   entries: NotepadEntry[];
   created_at: string;
   updated_at: string;
+  account_type: string;
+  expires_at: string | null;
+  days_remaining: number | null;
+  is_expiring_soon: boolean;
 }
 
 interface NotepadHistoryItem {
@@ -40,6 +45,8 @@ interface NotepadHistoryItem {
   created_at: string;
   last_used: string;
   entry_count: number;
+  days_remaining?: number;
+  is_expiring_soon?: boolean;
 }
 
 export default function Index() {
@@ -83,6 +90,8 @@ export default function Index() {
         created_at: notepad.created_at,
         last_used: new Date().toISOString(),
         entry_count: notepad.entries.length,
+        days_remaining: notepad.days_remaining || undefined,
+        is_expiring_soon: notepad.is_expiring_soon || false,
       };
       
       if (existingIndex >= 0) {
@@ -136,6 +145,10 @@ export default function Index() {
           await saveToHistory(data);
           setLoading(false);
           return;
+        } else if (response.status === 410) {
+          // Notepad expired, remove from storage and create new
+          await AsyncStorage.removeItem(STORAGE_KEY);
+          await removeFromHistory(parsed.code);
         }
       }
 
@@ -176,6 +189,14 @@ export default function Index() {
       setError('');
 
       const response = await fetch(`${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${code}`);
+      
+      if (response.status === 410) {
+        // Notepad expired
+        await removeFromHistory(code);
+        Alert.alert('Expired', 'This notepad has expired and is no longer available.');
+        setLoading(false);
+        return;
+      }
       
       if (!response.ok) {
         // Notepad no longer exists, remove from history
@@ -227,6 +248,12 @@ export default function Index() {
           body: JSON.stringify({ text: clipboardText }),
         }
       );
+
+      if (response.status === 410) {
+        setError('Notepad expired');
+        Alert.alert('Expired', 'This notepad has expired. Please create a new one.');
+        return;
+      }
 
       if (!response.ok) throw new Error('Failed to send');
 
@@ -325,8 +352,11 @@ export default function Index() {
           validatedHistory.push({
             ...item,
             entry_count: data.entries.length,
+            days_remaining: data.days_remaining,
+            is_expiring_soon: data.is_expiring_soon,
           });
         }
+        // Skip expired (410) or not found (404) notepads
       } catch {
         // Skip invalid notepads
       }
@@ -364,12 +394,27 @@ export default function Index() {
     });
   };
 
+  const formatExpirationDate = (dateStr: string | null) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      year: 'numeric'
+    });
+  };
+
   const renderHistoryItem = ({ item }: { item: NotepadHistoryItem }) => {
     const isActive = session?.code === item.code;
+    const isExpiringSoon = item.is_expiring_soon || false;
     
     return (
       <TouchableOpacity
-        style={[styles.historyItem, isActive && styles.historyItemActive]}
+        style={[
+          styles.historyItem, 
+          isActive && styles.historyItemActive,
+          isExpiringSoon && styles.historyItemExpiring
+        ]}
         onPress={() => switchToNotepad(item.code)}
         onLongPress={() => deleteFromHistory(item.code)}
       >
@@ -381,10 +426,23 @@ export default function Index() {
                 <Text style={styles.activeBadgeText}>Active</Text>
               </View>
             )}
+            {isExpiringSoon && !isActive && (
+              <View style={styles.expiringBadge}>
+                <Text style={styles.expiringBadgeText}>Expiring</Text>
+              </View>
+            )}
           </View>
           <Text style={styles.historyMeta}>
             {item.entry_count} entries • Last used {formatDate(item.last_used)}
           </Text>
+          {item.days_remaining !== undefined && (
+            <Text style={[
+              styles.historyExpiration,
+              isExpiringSoon && styles.historyExpirationWarning
+            ]}>
+              {item.days_remaining} days remaining
+            </Text>
+          )}
         </View>
         <Ionicons name="chevron-forward" size={20} color="#52525b" />
       </TouchableOpacity>
@@ -420,6 +478,16 @@ export default function Index() {
         </TouchableOpacity>
       </View>
 
+      {/* Expiration Warning Banner */}
+      {session?.is_expiring_soon && (
+        <View style={styles.expirationBanner}>
+          <Ionicons name="warning" size={18} color="#fbbf24" />
+          <Text style={styles.expirationBannerText}>
+            Expires in {session.days_remaining} day{session.days_remaining !== 1 ? 's' : ''} • {formatExpirationDate(session.expires_at)}
+          </Text>
+        </View>
+      )}
+
       {/* Code Display Card */}
       {session && (
         <View style={styles.codeCard}>
@@ -428,6 +496,14 @@ export default function Index() {
             <Text style={styles.codeText}>{session.code}</Text>
           </TouchableOpacity>
           <Text style={styles.codeHint}>Type this at the website on your PC</Text>
+          
+          {/* Expiration info (non-warning) */}
+          {!session.is_expiring_soon && session.days_remaining && (
+            <Text style={styles.expirationInfo}>
+              Available for {session.days_remaining} days
+            </Text>
+          )}
+          
           <View style={styles.codeActions}>
             <TouchableOpacity style={styles.codeActionBtn} onPress={copyCode}>
               <Ionicons name="copy-outline" size={18} color="#60a5fa" />
@@ -527,6 +603,10 @@ export default function Index() {
               </TouchableOpacity>
             </View>
 
+            <Text style={styles.modalSubtitle}>
+              Guest notepads expire after 90 days
+            </Text>
+
             {loadingHistory ? (
               <View style={styles.modalLoading}>
                 <ActivityIndicator size="large" color="#60a5fa" />
@@ -599,6 +679,25 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(96, 165, 250, 0.1)',
     borderRadius: 10,
   },
+  expirationBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginHorizontal: 20,
+    marginBottom: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
+  expirationBannerText: {
+    color: '#fbbf24',
+    fontSize: 14,
+    fontWeight: '500',
+  },
   codeCard: {
     marginHorizontal: 20,
     backgroundColor: 'rgba(96, 165, 250, 0.08)',
@@ -626,6 +725,11 @@ const styles = StyleSheet.create({
     color: '#52525b',
     marginTop: 8,
   },
+  expirationInfo: {
+    fontSize: 12,
+    color: '#71717a',
+    marginTop: 8,
+  },
   codeActions: {
     flexDirection: 'row',
     gap: 16,
@@ -647,7 +751,7 @@ const styles = StyleSheet.create({
   },
   captureButton: {
     marginHorizontal: 20,
-    marginTop: 32,
+    marginTop: 24,
     backgroundColor: '#3b82f6',
     borderRadius: 24,
     paddingVertical: 36,
@@ -688,7 +792,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 24,
-    marginTop: 32,
+    marginTop: 24,
   },
   bottomBtn: {
     alignItems: 'center',
@@ -737,12 +841,18 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    marginBottom: 16,
+    marginBottom: 4,
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#71717a',
+    paddingHorizontal: 20,
+    marginBottom: 16,
   },
   modalCloseBtn: {
     padding: 4,
@@ -788,6 +898,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(96, 165, 250, 0.3)',
   },
+  historyItemExpiring: {
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
   historyItemLeft: {
     flex: 1,
   },
@@ -813,10 +927,29 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
   },
+  expiringBadge: {
+    backgroundColor: '#f59e0b',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  expiringBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '600',
+  },
   historyMeta: {
     fontSize: 12,
     color: '#71717a',
     marginTop: 4,
+  },
+  historyExpiration: {
+    fontSize: 11,
+    color: '#52525b',
+    marginTop: 2,
+  },
+  historyExpirationWarning: {
+    color: '#fbbf24',
   },
   newNotepadBtn: {
     flexDirection: 'row',
