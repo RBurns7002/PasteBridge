@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,9 +7,10 @@ import {
   ActivityIndicator,
   Share,
   Platform,
-  Linking,
   Alert,
   Vibration,
+  FlatList,
+  Modal,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
@@ -18,7 +19,8 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const EXPO_PUBLIC_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
-const STORAGE_KEY = 'pastebridge_session';
+const STORAGE_KEY = 'pastebridge_current_session';
+const HISTORY_KEY = 'pastebridge_notepad_history';
 
 interface NotepadEntry {
   text: string;
@@ -33,6 +35,13 @@ interface NotepadSession {
   updated_at: string;
 }
 
+interface NotepadHistoryItem {
+  code: string;
+  created_at: string;
+  last_used: string;
+  entry_count: number;
+}
+
 export default function Index() {
   const [session, setSession] = useState<NotepadSession | null>(null);
   const [loading, setLoading] = useState(true);
@@ -40,19 +49,80 @@ export default function Index() {
   const [lastCaptured, setLastCaptured] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
-
-  const webViewUrl = session
-    ? `${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${session.code}/view`
-    : '';
+  const [historyModalVisible, setHistoryModalVisible] = useState(false);
+  const [history, setHistory] = useState<NotepadHistoryItem[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   useEffect(() => {
     loadOrCreateSession();
   }, []);
 
+  // Load notepad history from storage
+  const loadHistory = async (): Promise<NotepadHistoryItem[]> => {
+    try {
+      const historyJson = await AsyncStorage.getItem(HISTORY_KEY);
+      if (historyJson) {
+        return JSON.parse(historyJson);
+      }
+    } catch (err) {
+      console.error('Error loading history:', err);
+    }
+    return [];
+  };
+
+  // Save notepad to history
+  const saveToHistory = async (notepad: NotepadSession) => {
+    try {
+      const currentHistory = await loadHistory();
+      
+      // Check if already exists
+      const existingIndex = currentHistory.findIndex(h => h.code === notepad.code);
+      
+      const historyItem: NotepadHistoryItem = {
+        code: notepad.code,
+        created_at: notepad.created_at,
+        last_used: new Date().toISOString(),
+        entry_count: notepad.entries.length,
+      };
+      
+      if (existingIndex >= 0) {
+        // Update existing
+        currentHistory[existingIndex] = historyItem;
+      } else {
+        // Add new at the beginning
+        currentHistory.unshift(historyItem);
+      }
+      
+      // Keep only last 50 notepads
+      const trimmedHistory = currentHistory.slice(0, 50);
+      
+      await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(trimmedHistory));
+      setHistory(trimmedHistory);
+    } catch (err) {
+      console.error('Error saving to history:', err);
+    }
+  };
+
+  // Remove notepad from history
+  const removeFromHistory = async (code: string) => {
+    try {
+      const currentHistory = await loadHistory();
+      const filtered = currentHistory.filter(h => h.code !== code);
+      await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(filtered));
+      setHistory(filtered);
+    } catch (err) {
+      console.error('Error removing from history:', err);
+    }
+  };
+
   const loadOrCreateSession = async () => {
     try {
       setLoading(true);
       setError('');
+
+      // Load history
+      const savedHistory = await loadHistory();
+      setHistory(savedHistory);
 
       const savedSession = await AsyncStorage.getItem(STORAGE_KEY);
       if (savedSession) {
@@ -63,6 +133,7 @@ export default function Index() {
         if (response.ok) {
           const data = await response.json();
           setSession(data);
+          await saveToHistory(data);
           setLoading(false);
           return;
         }
@@ -90,9 +161,40 @@ export default function Index() {
       const data = await response.json();
       setSession(data);
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      await saveToHistory(data);
+      return data;
     } catch (err) {
       console.error('Error creating session:', err);
       throw err;
+    }
+  };
+
+  const switchToNotepad = async (code: string) => {
+    try {
+      setLoading(true);
+      setHistoryModalVisible(false);
+      setError('');
+
+      const response = await fetch(`${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${code}`);
+      
+      if (!response.ok) {
+        // Notepad no longer exists, remove from history
+        await removeFromHistory(code);
+        setError('Notepad not found');
+        setLoading(false);
+        return;
+      }
+
+      const data = await response.json();
+      setSession(data);
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      await saveToHistory(data);
+      setLastCaptured('');
+    } catch (err) {
+      console.error('Error switching notepad:', err);
+      setError('Failed to load notepad');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -133,6 +235,9 @@ export default function Index() {
       setLastCaptured(clipboardText);
       setSuccessMessage('Sent!');
       Vibration.vibrate(50);
+
+      // Update history with new entry count
+      await saveToHistory(updatedNotepad);
 
       setTimeout(() => setSuccessMessage(''), 2000);
     } catch (err) {
@@ -177,8 +282,10 @@ export default function Index() {
               `${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${session.code}`,
               { method: 'DELETE' }
             );
-            setSession({ ...session, entries: [] });
+            const updatedSession = { ...session, entries: [] };
+            setSession(updatedSession);
             setLastCaptured('');
+            await saveToHistory(updatedSession);
             setSuccessMessage('Cleared!');
             setTimeout(() => setSuccessMessage(''), 2000);
           } catch (err) {
@@ -190,19 +297,98 @@ export default function Index() {
   };
 
   const startNewSession = async () => {
-    Alert.alert('New Session', 'Create new notepad with new code?', [
+    Alert.alert('New Notepad', 'Create a new notepad? Your current notepad will be saved in history.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Create New',
         onPress: async () => {
           setLoading(true);
-          await AsyncStorage.removeItem(STORAGE_KEY);
           await createNewSession();
           setLastCaptured('');
           setLoading(false);
         },
       },
     ]);
+  };
+
+  const openHistoryModal = async () => {
+    setLoadingHistory(true);
+    const savedHistory = await loadHistory();
+    
+    // Validate each notepad still exists and update entry counts
+    const validatedHistory: NotepadHistoryItem[] = [];
+    for (const item of savedHistory) {
+      try {
+        const response = await fetch(`${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${item.code}`);
+        if (response.ok) {
+          const data = await response.json();
+          validatedHistory.push({
+            ...item,
+            entry_count: data.entries.length,
+          });
+        }
+      } catch {
+        // Skip invalid notepads
+      }
+    }
+    
+    await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(validatedHistory));
+    setHistory(validatedHistory);
+    setLoadingHistory(false);
+    setHistoryModalVisible(true);
+  };
+
+  const deleteFromHistory = (code: string) => {
+    if (session?.code === code) {
+      Alert.alert('Cannot Delete', 'This is your current notepad. Switch to another notepad first.');
+      return;
+    }
+
+    Alert.alert('Remove from History', 'Remove this notepad from your history?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: () => removeFromHistory(code),
+      },
+    ]);
+  };
+
+  const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const renderHistoryItem = ({ item }: { item: NotepadHistoryItem }) => {
+    const isActive = session?.code === item.code;
+    
+    return (
+      <TouchableOpacity
+        style={[styles.historyItem, isActive && styles.historyItemActive]}
+        onPress={() => switchToNotepad(item.code)}
+        onLongPress={() => deleteFromHistory(item.code)}
+      >
+        <View style={styles.historyItemLeft}>
+          <View style={styles.historyCodeRow}>
+            <Text style={styles.historyCode}>{item.code}</Text>
+            {isActive && (
+              <View style={styles.activeBadge}>
+                <Text style={styles.activeBadgeText}>Active</Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.historyMeta}>
+            {item.entry_count} entries • Last used {formatDate(item.last_used)}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color="#52525b" />
+      </TouchableOpacity>
+    );
   };
 
   // Loading state
@@ -212,7 +398,7 @@ export default function Index() {
         <StatusBar style="light" />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#60a5fa" />
-          <Text style={styles.loadingText}>Setting up PasteBridge...</Text>
+          <Text style={styles.loadingText}>Loading PasteBridge...</Text>
         </View>
       </SafeAreaView>
     );
@@ -226,6 +412,12 @@ export default function Index() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>PasteBridge</Text>
+        <TouchableOpacity
+          style={styles.historyBtn}
+          onPress={openHistoryModal}
+        >
+          <Ionicons name="time-outline" size={24} color="#60a5fa" />
+        </TouchableOpacity>
       </View>
 
       {/* Code Display Card */}
@@ -296,7 +488,11 @@ export default function Index() {
         </TouchableOpacity>
         <TouchableOpacity style={styles.bottomBtn} onPress={startNewSession}>
           <Ionicons name="add-circle-outline" size={20} color="#71717a" />
-          <Text style={styles.bottomBtnText}>New Code</Text>
+          <Text style={styles.bottomBtnText}>New Notepad</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.bottomBtn} onPress={openHistoryModal}>
+          <Ionicons name="folder-outline" size={20} color="#71717a" />
+          <Text style={styles.bottomBtnText}>History</Text>
         </TouchableOpacity>
       </View>
 
@@ -311,6 +507,62 @@ export default function Index() {
           5. Text appears on your PC!
         </Text>
       </View>
+
+      {/* History Modal */}
+      <Modal
+        visible={historyModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setHistoryModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Your Notepads</Text>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setHistoryModalVisible(false)}
+              >
+                <Ionicons name="close" size={24} color="#a1a1aa" />
+              </TouchableOpacity>
+            </View>
+
+            {loadingHistory ? (
+              <View style={styles.modalLoading}>
+                <ActivityIndicator size="large" color="#60a5fa" />
+                <Text style={styles.modalLoadingText}>Loading notepads...</Text>
+              </View>
+            ) : history.length === 0 ? (
+              <View style={styles.modalEmpty}>
+                <Ionicons name="folder-open-outline" size={48} color="#52525b" />
+                <Text style={styles.modalEmptyText}>No notepads yet</Text>
+                <Text style={styles.modalEmptyHint}>Create your first notepad to get started</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={history}
+                renderItem={renderHistoryItem}
+                keyExtractor={(item) => item.code}
+                style={styles.historyList}
+                showsVerticalScrollIndicator={false}
+              />
+            )}
+
+            <TouchableOpacity
+              style={styles.newNotepadBtn}
+              onPress={() => {
+                setHistoryModalVisible(false);
+                startNewSession();
+              }}
+            >
+              <Ionicons name="add" size={20} color="#ffffff" />
+              <Text style={styles.newNotepadBtnText}>Create New Notepad</Text>
+            </TouchableOpacity>
+
+            <Text style={styles.modalHint}>Long press to remove from history</Text>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -332,7 +584,7 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 16,
@@ -341,6 +593,11 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: 'bold',
     color: '#60a5fa',
+  },
+  historyBtn: {
+    padding: 8,
+    backgroundColor: 'rgba(96, 165, 250, 0.1)',
+    borderRadius: 10,
   },
   codeCard: {
     marginHorizontal: 20,
@@ -430,7 +687,7 @@ const styles = StyleSheet.create({
   bottomActions: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 32,
+    gap: 24,
     marginTop: 32,
   },
   bottomBtn: {
@@ -459,5 +716,128 @@ const styles = StyleSheet.create({
     color: '#52525b',
     fontSize: 11,
     lineHeight: 18,
+  },
+
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#1a1a2e',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 20,
+    paddingBottom: 40,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  modalCloseBtn: {
+    padding: 4,
+  },
+  modalLoading: {
+    padding: 40,
+    alignItems: 'center',
+    gap: 16,
+  },
+  modalLoadingText: {
+    color: '#a1a1aa',
+    fontSize: 14,
+  },
+  modalEmpty: {
+    padding: 40,
+    alignItems: 'center',
+    gap: 12,
+  },
+  modalEmptyText: {
+    color: '#a1a1aa',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  modalEmptyHint: {
+    color: '#52525b',
+    fontSize: 14,
+  },
+  historyList: {
+    paddingHorizontal: 20,
+    maxHeight: 400,
+  },
+  historyItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 10,
+  },
+  historyItemActive: {
+    backgroundColor: 'rgba(96, 165, 250, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(96, 165, 250, 0.3)',
+  },
+  historyItemLeft: {
+    flex: 1,
+  },
+  historyCodeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  historyCode: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#60a5fa',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  activeBadge: {
+    backgroundColor: '#22c55e',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  activeBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  historyMeta: {
+    fontSize: 12,
+    color: '#71717a',
+    marginTop: 4,
+  },
+  newNotepadBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#3b82f6',
+    marginHorizontal: 20,
+    marginTop: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  newNotepadBtnText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalHint: {
+    color: '#52525b',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 16,
   },
 });
