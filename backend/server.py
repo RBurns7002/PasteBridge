@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
 import json
 
@@ -27,6 +27,10 @@ app = FastAPI()
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
+
+# Constants
+GUEST_EXPIRATION_DAYS = 90
+EXPIRATION_WARNING_DAYS = 7
 
 
 # Word lists for memorable codes
@@ -53,6 +57,26 @@ def generate_memorable_code():
     return f"{adj}{noun}{num}"
 
 
+def get_expiration_date():
+    """Get expiration date for guest accounts (90 days from now)"""
+    return datetime.utcnow() + timedelta(days=GUEST_EXPIRATION_DAYS)
+
+
+def calculate_days_remaining(expires_at: datetime) -> int:
+    """Calculate days remaining until expiration"""
+    if not expires_at:
+        return GUEST_EXPIRATION_DAYS
+    delta = expires_at - datetime.utcnow()
+    return max(0, delta.days)
+
+
+def is_expired(expires_at: datetime) -> bool:
+    """Check if notepad is expired"""
+    if not expires_at:
+        return False
+    return datetime.utcnow() > expires_at
+
+
 # Define Models
 class NotepadEntry(BaseModel):
     text: str
@@ -64,6 +88,9 @@ class Notepad(BaseModel):
     entries: List[NotepadEntry] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    # New fields for Phase 2
+    account_type: str = "guest"  # guest | user | premium
+    expires_at: datetime = Field(default_factory=get_expiration_date)
 
 class NotepadCreate(BaseModel):
     pass
@@ -77,9 +104,40 @@ class NotepadResponse(BaseModel):
     entries: List[NotepadEntry]
     created_at: datetime
     updated_at: datetime
+    account_type: str = "guest"
+    expires_at: Optional[datetime] = None
+    days_remaining: Optional[int] = None
+    is_expiring_soon: bool = False
 
 class CodeLookupRequest(BaseModel):
     code: str
+
+
+def build_notepad_response(notepad: dict) -> NotepadResponse:
+    """Build NotepadResponse with expiration info"""
+    expires_at = notepad.get("expires_at")
+    
+    # Handle legacy notepads without expires_at
+    if not expires_at:
+        created_at = notepad.get("created_at", datetime.utcnow())
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+        expires_at = created_at + timedelta(days=GUEST_EXPIRATION_DAYS)
+    
+    days_remaining = calculate_days_remaining(expires_at)
+    is_expiring_soon = days_remaining <= EXPIRATION_WARNING_DAYS
+    
+    return NotepadResponse(
+        id=notepad.get("id", str(notepad.get("_id", ""))),
+        code=notepad.get("code"),
+        entries=[NotepadEntry(**e) for e in notepad.get("entries", [])],
+        created_at=notepad.get("created_at"),
+        updated_at=notepad.get("updated_at"),
+        account_type=notepad.get("account_type", "guest"),
+        expires_at=expires_at,
+        days_remaining=days_remaining,
+        is_expiring_soon=is_expiring_soon
+    )
 
 
 # Notepad API Routes
@@ -95,7 +153,7 @@ async def create_notepad():
     
     notepad_dict = notepad.dict()
     await db.notepads.insert_one(notepad_dict)
-    return NotepadResponse(**notepad_dict)
+    return build_notepad_response(notepad_dict)
 
 
 @api_router.get("/notepad/{code}", response_model=NotepadResponse)
@@ -104,7 +162,13 @@ async def get_notepad(code: str):
     notepad = await db.notepads.find_one({"code": code.lower()})
     if not notepad:
         raise HTTPException(status_code=404, detail="Notepad not found. Check your code.")
-    return NotepadResponse(**notepad)
+    
+    # Check if expired
+    expires_at = notepad.get("expires_at")
+    if expires_at and is_expired(expires_at):
+        raise HTTPException(status_code=410, detail="This notepad has expired and is no longer available.")
+    
+    return build_notepad_response(notepad)
 
 
 @api_router.post("/notepad/lookup", response_model=NotepadResponse)
@@ -114,7 +178,13 @@ async def lookup_notepad(request: CodeLookupRequest):
     notepad = await db.notepads.find_one({"code": code})
     if not notepad:
         raise HTTPException(status_code=404, detail="Notepad not found. Check your code.")
-    return NotepadResponse(**notepad)
+    
+    # Check if expired
+    expires_at = notepad.get("expires_at")
+    if expires_at and is_expired(expires_at):
+        raise HTTPException(status_code=410, detail="This notepad has expired and is no longer available.")
+    
+    return build_notepad_response(notepad)
 
 
 @api_router.post("/notepad/{code}/append", response_model=NotepadResponse)
@@ -123,6 +193,11 @@ async def append_to_notepad(code: str, request: AppendTextRequest):
     notepad = await db.notepads.find_one({"code": code.lower()})
     if not notepad:
         raise HTTPException(status_code=404, detail="Notepad not found")
+    
+    # Check if expired
+    expires_at = notepad.get("expires_at")
+    if expires_at and is_expired(expires_at):
+        raise HTTPException(status_code=410, detail="This notepad has expired. Please create a new one.")
     
     new_entry = NotepadEntry(text=request.text)
     
@@ -135,7 +210,7 @@ async def append_to_notepad(code: str, request: AppendTextRequest):
     )
     
     updated_notepad = await db.notepads.find_one({"code": code.lower()})
-    return NotepadResponse(**updated_notepad)
+    return build_notepad_response(updated_notepad)
 
 
 @api_router.delete("/notepad/{code}")
@@ -150,6 +225,45 @@ async def clear_notepad(code: str):
         {"$set": {"entries": [], "updated_at": datetime.utcnow()}}
     )
     return {"message": "Notepad cleared"}
+
+
+@api_router.post("/admin/cleanup-expired")
+async def cleanup_expired_notepads():
+    """Admin endpoint to cleanup expired notepads"""
+    now = datetime.utcnow()
+    result = await db.notepads.delete_many({
+        "expires_at": {"$lt": now},
+        "account_type": "guest"
+    })
+    return {
+        "message": f"Cleaned up {result.deleted_count} expired notepads",
+        "deleted_count": result.deleted_count
+    }
+
+
+@api_router.get("/admin/stats")
+async def get_stats():
+    """Get notepad statistics"""
+    total = await db.notepads.count_documents({})
+    guest = await db.notepads.count_documents({"account_type": "guest"})
+    
+    now = datetime.utcnow()
+    expiring_soon = await db.notepads.count_documents({
+        "expires_at": {
+            "$gt": now,
+            "$lt": now + timedelta(days=EXPIRATION_WARNING_DAYS)
+        }
+    })
+    expired = await db.notepads.count_documents({
+        "expires_at": {"$lt": now}
+    })
+    
+    return {
+        "total_notepads": total,
+        "guest_notepads": guest,
+        "expiring_soon": expiring_soon,
+        "expired_awaiting_cleanup": expired
+    }
 
 
 # Landing Page - Enter code to view notepad
@@ -249,7 +363,15 @@ async def landing_page():
             try {
                 var response = await fetch('/api/notepad/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: code }) });
                 if (response.ok) { window.location.href = '/api/notepad/' + code + '/view'; }
-                else { var data = await response.json(); errorEl.textContent = data.detail || 'Notepad not found.'; errorEl.classList.add('show'); }
+                else { 
+                    var data = await response.json(); 
+                    if (response.status === 410) {
+                        errorEl.textContent = 'This notepad has expired. Guest notepads are available for 90 days.';
+                    } else {
+                        errorEl.textContent = data.detail || 'Notepad not found.'; 
+                    }
+                    errorEl.classList.add('show'); 
+                }
             } catch (err) { errorEl.textContent = 'Connection error. Please try again.'; errorEl.classList.add('show'); }
         }
         document.getElementById('codeInput').focus();
@@ -274,7 +396,45 @@ async def view_notepad(code: str):
             status_code=404
         )
     
+    # Check if expired
+    expires_at = notepad.get("expires_at")
+    if expires_at and is_expired(expires_at):
+        return HTMLResponse(
+            content='''<!DOCTYPE html><html><head><title>Expired</title>
+            <style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0f0f1a;color:#fff;}
+            .container{text-align:center;max-width:400px;}.icon{font-size:4rem;margin-bottom:16px;}h1{color:#f59e0b;margin-bottom:12px;}
+            p{color:#a1a1aa;margin-bottom:8px;}a{color:#60a5fa;}</style></head>
+            <body><div class="container"><div class="icon">⏰</div><h1>Notepad Expired</h1>
+            <p>This notepad has expired. Guest notepads are available for 90 days.</p>
+            <p>Create a new notepad from the app to continue.</p>
+            <p><a href="/api/">← Back to home</a></p></div></body></html>''',
+            status_code=410
+        )
+    
     notepad_code = notepad.get("code")
+    
+    # Calculate expiration info
+    if not expires_at:
+        created_at = notepad.get("created_at", datetime.utcnow())
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+        expires_at = created_at + timedelta(days=GUEST_EXPIRATION_DAYS)
+    
+    days_remaining = calculate_days_remaining(expires_at)
+    is_expiring_soon = days_remaining <= EXPIRATION_WARNING_DAYS
+    expiration_date_str = expires_at.strftime("%B %d, %Y")
+    
+    # Build expiration banner HTML
+    if is_expiring_soon:
+        expiration_banner = f'''<div class="expiration-banner warning">
+            <span class="expiration-icon">⚠️</span>
+            <span>Expires in {days_remaining} day{"s" if days_remaining != 1 else ""} ({expiration_date_str})</span>
+        </div>'''
+    else:
+        expiration_banner = f'''<div class="expiration-banner">
+            <span class="expiration-icon">📅</span>
+            <span>Expires {expiration_date_str} ({days_remaining} days)</span>
+        </div>'''
     
     # Pre-render the initial entries server-side
     entries_html = ""
@@ -327,7 +487,7 @@ async def view_notepad(code: str):
             justify-content: space-between;
             padding: 20px 0;
             border-bottom: 1px solid rgba(255,255,255,0.1);
-            margin-bottom: 24px;
+            margin-bottom: 16px;
         }}
         .header-left h1 {{ font-size: 1.5rem; color: #60a5fa; margin-bottom: 4px; }}
         .code-badge {{
@@ -342,6 +502,23 @@ async def view_notepad(code: str):
             color: #60a5fa;
             font-weight: 600;
         }}
+        .expiration-banner {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            font-size: 0.85rem;
+            color: #a1a1aa;
+            margin-bottom: 16px;
+        }}
+        .expiration-banner.warning {{
+            background: rgba(245, 158, 11, 0.15);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }}
+        .expiration-icon {{ font-size: 1rem; }}
         .status {{
             display: flex;
             align-items: center;
@@ -401,6 +578,7 @@ async def view_notepad(code: str):
                 <div class="label">entries</div>
             </div>
         </div>
+        {expiration_banner}
         <div class="status">
             <span class="dot"></span>
             <span id="statusText">Live updating</span>
@@ -467,10 +645,18 @@ async def view_notepad(code: str):
         
         function poll() {{
             fetch('/api/notepad/' + CODE)
-                .then(function(r) {{ return r.json(); }})
+                .then(function(r) {{ 
+                    if (r.status === 410) {{
+                        document.getElementById('statusText').textContent = 'Notepad expired';
+                        return null;
+                    }}
+                    return r.json(); 
+                }})
                 .then(function(data) {{
-                    renderEntries(data.entries);
-                    document.getElementById('statusText').textContent = 'Live updating';
+                    if (data) {{
+                        renderEntries(data.entries);
+                        document.getElementById('statusText').textContent = 'Live updating';
+                    }}
                 }})
                 .catch(function() {{
                     document.getElementById('statusText').textContent = 'Reconnecting...';
