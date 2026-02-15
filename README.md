@@ -10,7 +10,7 @@ A frictionless way to transfer text from your Android phone to your PC. Copy tex
 3. Note your unique code (e.g., `warmfern34`)
 
 ### On Your PC
-1. Go to: **https://pastebridge.preview.emergentagent.com/api/**
+1. Go to: **https://clip-sync-1.preview.emergentagent.com/api/**
 2. Enter your code
 3. The notepad view opens and auto-refreshes
 

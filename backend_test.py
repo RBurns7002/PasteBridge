@@ -11,7 +11,7 @@ from datetime import datetime
 import sys
 
 # Backend URL from frontend .env
-BACKEND_URL = "https://pastebridge.preview.emergentagent.com"
+BACKEND_URL = "https://clip-sync-1.preview.emergentagent.com"
 API_BASE = f"{BACKEND_URL}/api"
 
 class Colors:

@@ -39,7 +39,7 @@ jobs:
     - name: Create .env file
       working-directory: frontend
       run: |
-        echo "EXPO_PUBLIC_BACKEND_URL=${{ vars.BACKEND_URL || 'https://pastebridge.preview.emergentagent.com' }}" > .env
+        echo "EXPO_PUBLIC_BACKEND_URL=${{ vars.BACKEND_URL || 'https://clip-sync-1.preview.emergentagent.com' }}" > .env
 
     - name: Generate native Android project
       working-directory: frontend
@@ -118,7 +118,7 @@ jobs:
           
           ### How to Use
           1. Open the app - you'll see your unique code (e.g., `warmfern34`)
-          2. On your PC, go to: **https://pastebridge.preview.emergentagent.com/api/**
+          2. On your PC, go to: **https://clip-sync-1.preview.emergentagent.com/api/**
           3. Enter the code from your phone
           4. Copy text on your phone, tap "Capture & Send"
           5. Text appears on your PC instantly!
