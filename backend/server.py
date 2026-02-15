@@ -1,17 +1,21 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional
 import uuid
 from datetime import datetime, timedelta
 import random
 import json
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+import secrets
 
 
 ROOT_DIR = Path(__file__).parent
@@ -28,8 +32,19 @@ app = FastAPI()
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
+# Security
+security = HTTPBearer(auto_error=False)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# JWT Settings
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY", secrets.token_hex(32))
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_DAYS = 30
+
 # Constants
 GUEST_EXPIRATION_DAYS = 90
+USER_EXPIRATION_DAYS = 365  # 1 year for registered users
+PREMIUM_EXPIRATION_DAYS = None  # Never expires
 EXPIRATION_WARNING_DAYS = 7
 
 
@@ -57,15 +72,20 @@ def generate_memorable_code():
     return f"{adj}{noun}{num}"
 
 
-def get_expiration_date():
-    """Get expiration date for guest accounts (90 days from now)"""
-    return datetime.utcnow() + timedelta(days=GUEST_EXPIRATION_DAYS)
+def get_expiration_date(account_type: str = "guest"):
+    """Get expiration date based on account type"""
+    if account_type == "premium":
+        return None  # Never expires
+    elif account_type == "user":
+        return datetime.utcnow() + timedelta(days=USER_EXPIRATION_DAYS)
+    else:  # guest
+        return datetime.utcnow() + timedelta(days=GUEST_EXPIRATION_DAYS)
 
 
 def calculate_days_remaining(expires_at: datetime) -> int:
     """Calculate days remaining until expiration"""
     if not expires_at:
-        return GUEST_EXPIRATION_DAYS
+        return None  # Premium - never expires
     delta = expires_at - datetime.utcnow()
     return max(0, delta.days)
 
@@ -77,10 +97,77 @@ def is_expired(expires_at: datetime) -> bool:
     return datetime.utcnow() > expires_at
 
 
-# Define Models
+# Password helpers
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+# JWT helpers
+def create_access_token(data: dict) -> str:
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+def decode_token(token: str) -> dict:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        return None
+
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get current user from JWT token (optional - returns None if not authenticated)"""
+    if not credentials:
+        return None
+    
+    token = credentials.credentials
+    payload = decode_token(token)
+    if not payload:
+        return None
+    
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    
+    user = await db.users.find_one({"id": user_id})
+    return user
+
+
+async def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Require authentication - raises 401 if not authenticated"""
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    token = credentials.credentials
+    payload = decode_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    user = await db.users.find_one({"id": user_id})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    
+    return user
+
+
+# ==================== Models ====================
+
 class NotepadEntry(BaseModel):
     text: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
 
 class Notepad(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -88,15 +175,50 @@ class Notepad(BaseModel):
     entries: List[NotepadEntry] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-    # New fields for Phase 2
-    account_type: str = "guest"  # guest | user | premium
-    expires_at: datetime = Field(default_factory=get_expiration_date)
+    account_type: str = "guest"
+    expires_at: Optional[datetime] = Field(default_factory=lambda: get_expiration_date("guest"))
+    user_id: Optional[str] = None  # Link to user account
 
-class NotepadCreate(BaseModel):
-    pass
+
+class User(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    email: str
+    password_hash: str
+    name: str = ""
+    account_type: str = "user"  # user | premium
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# Request/Response models
+class UserRegister(BaseModel):
+    email: EmailStr
+    password: str
+    name: str = ""
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: str
+    email: str
+    name: str
+    account_type: str
+    created_at: datetime
+
+
+class AuthResponse(BaseModel):
+    user: UserResponse
+    token: str
+    message: str
+
 
 class AppendTextRequest(BaseModel):
     text: str
+
 
 class NotepadResponse(BaseModel):
     id: str
@@ -108,24 +230,43 @@ class NotepadResponse(BaseModel):
     expires_at: Optional[datetime] = None
     days_remaining: Optional[int] = None
     is_expiring_soon: bool = False
+    user_id: Optional[str] = None
+
 
 class CodeLookupRequest(BaseModel):
     code: str
 
 
+class LinkNotepadRequest(BaseModel):
+    code: str
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: str
+
+
 def build_notepad_response(notepad: dict) -> NotepadResponse:
     """Build NotepadResponse with expiration info"""
     expires_at = notepad.get("expires_at")
+    account_type = notepad.get("account_type", "guest")
     
     # Handle legacy notepads without expires_at
-    if not expires_at:
+    if expires_at is None and account_type != "premium":
         created_at = notepad.get("created_at", datetime.utcnow())
         if isinstance(created_at, str):
             created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-        expires_at = created_at + timedelta(days=GUEST_EXPIRATION_DAYS)
+        if account_type == "user":
+            expires_at = created_at + timedelta(days=USER_EXPIRATION_DAYS)
+        else:
+            expires_at = created_at + timedelta(days=GUEST_EXPIRATION_DAYS)
     
-    days_remaining = calculate_days_remaining(expires_at)
-    is_expiring_soon = days_remaining <= EXPIRATION_WARNING_DAYS
+    days_remaining = calculate_days_remaining(expires_at) if expires_at else None
+    is_expiring_soon = days_remaining is not None and days_remaining <= EXPIRATION_WARNING_DAYS
     
     return NotepadResponse(
         id=notepad.get("id", str(notepad.get("_id", ""))),
@@ -133,23 +274,180 @@ def build_notepad_response(notepad: dict) -> NotepadResponse:
         entries=[NotepadEntry(**e) for e in notepad.get("entries", [])],
         created_at=notepad.get("created_at"),
         updated_at=notepad.get("updated_at"),
-        account_type=notepad.get("account_type", "guest"),
+        account_type=account_type,
         expires_at=expires_at,
         days_remaining=days_remaining,
-        is_expiring_soon=is_expiring_soon
+        is_expiring_soon=is_expiring_soon,
+        user_id=notepad.get("user_id")
     )
 
 
-# Notepad API Routes
+# ==================== Auth Routes ====================
+
+@api_router.post("/auth/register", response_model=AuthResponse)
+async def register(data: UserRegister):
+    """Register a new user account"""
+    # Check if email already exists
+    existing = await db.users.find_one({"email": data.email.lower()})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Validate password
+    if len(data.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    
+    # Create user
+    user = User(
+        email=data.email.lower(),
+        password_hash=get_password_hash(data.password),
+        name=data.name or data.email.split("@")[0]
+    )
+    
+    await db.users.insert_one(user.dict())
+    
+    # Create token
+    token = create_access_token({"sub": user.id})
+    
+    return AuthResponse(
+        user=UserResponse(
+            id=user.id,
+            email=user.email,
+            name=user.name,
+            account_type=user.account_type,
+            created_at=user.created_at
+        ),
+        token=token,
+        message="Account created successfully"
+    )
+
+
+@api_router.post("/auth/login", response_model=AuthResponse)
+async def login(data: UserLogin):
+    """Login with email and password"""
+    user = await db.users.find_one({"email": data.email.lower()})
+    
+    if not user or not verify_password(data.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Create token
+    token = create_access_token({"sub": user["id"]})
+    
+    return AuthResponse(
+        user=UserResponse(
+            id=user["id"],
+            email=user["email"],
+            name=user.get("name", ""),
+            account_type=user.get("account_type", "user"),
+            created_at=user["created_at"]
+        ),
+        token=token,
+        message="Login successful"
+    )
+
+
+@api_router.get("/auth/me", response_model=UserResponse)
+async def get_me(user: dict = Depends(require_auth)):
+    """Get current user profile"""
+    return UserResponse(
+        id=user["id"],
+        email=user["email"],
+        name=user.get("name", ""),
+        account_type=user.get("account_type", "user"),
+        created_at=user["created_at"]
+    )
+
+
+@api_router.put("/auth/profile", response_model=UserResponse)
+async def update_profile(data: ProfileUpdateRequest, user: dict = Depends(require_auth)):
+    """Update user profile"""
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"name": data.name, "updated_at": datetime.utcnow()}}
+    )
+    
+    updated_user = await db.users.find_one({"id": user["id"]})
+    return UserResponse(
+        id=updated_user["id"],
+        email=updated_user["email"],
+        name=updated_user.get("name", ""),
+        account_type=updated_user.get("account_type", "user"),
+        created_at=updated_user["created_at"]
+    )
+
+
+@api_router.post("/auth/change-password")
+async def change_password(data: PasswordChangeRequest, user: dict = Depends(require_auth)):
+    """Change user password"""
+    if not verify_password(data.current_password, user["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    
+    if len(data.new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+    
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"password_hash": get_password_hash(data.new_password), "updated_at": datetime.utcnow()}}
+    )
+    
+    return {"message": "Password changed successfully"}
+
+
+@api_router.get("/auth/notepads", response_model=List[NotepadResponse])
+async def get_user_notepads(user: dict = Depends(require_auth)):
+    """Get all notepads owned by current user"""
+    notepads = await db.notepads.find({"user_id": user["id"]}).to_list(100)
+    return [build_notepad_response(n) for n in notepads]
+
+
+@api_router.post("/auth/link-notepad", response_model=NotepadResponse)
+async def link_notepad(data: LinkNotepadRequest, user: dict = Depends(require_auth)):
+    """Link an existing guest notepad to user account"""
+    notepad = await db.notepads.find_one({"code": data.code.lower()})
+    
+    if not notepad:
+        raise HTTPException(status_code=404, detail="Notepad not found")
+    
+    if notepad.get("user_id"):
+        if notepad["user_id"] == user["id"]:
+            raise HTTPException(status_code=400, detail="Notepad already linked to your account")
+        raise HTTPException(status_code=400, detail="Notepad belongs to another user")
+    
+    # Link notepad to user and extend expiration
+    new_expires = get_expiration_date(user.get("account_type", "user"))
+    
+    await db.notepads.update_one(
+        {"code": data.code.lower()},
+        {
+            "$set": {
+                "user_id": user["id"],
+                "account_type": user.get("account_type", "user"),
+                "expires_at": new_expires,
+                "updated_at": datetime.utcnow()
+            }
+        }
+    )
+    
+    updated = await db.notepads.find_one({"code": data.code.lower()})
+    return build_notepad_response(updated)
+
+
+# ==================== Notepad Routes ====================
+
 @api_router.post("/notepad", response_model=NotepadResponse)
-async def create_notepad():
-    """Create a new notepad session with memorable code"""
+async def create_notepad(user: dict = Depends(get_current_user)):
+    """Create a new notepad session"""
     for _ in range(10):
         notepad = Notepad()
         existing = await db.notepads.find_one({"code": notepad.code})
         if not existing:
             break
         notepad = Notepad()
+    
+    # If user is logged in, link notepad to their account
+    if user:
+        notepad.user_id = user["id"]
+        notepad.account_type = user.get("account_type", "user")
+        notepad.expires_at = get_expiration_date(notepad.account_type)
     
     notepad_dict = notepad.dict()
     await db.notepads.insert_one(notepad_dict)
@@ -227,13 +525,15 @@ async def clear_notepad(code: str):
     return {"message": "Notepad cleared"}
 
 
+# ==================== Admin Routes ====================
+
 @api_router.post("/admin/cleanup-expired")
 async def cleanup_expired_notepads():
     """Admin endpoint to cleanup expired notepads"""
     now = datetime.utcnow()
     result = await db.notepads.delete_many({
         "expires_at": {"$lt": now},
-        "account_type": "guest"
+        "account_type": {"$in": ["guest", "user"]}
     })
     return {
         "message": f"Cleaned up {result.deleted_count} expired notepads",
@@ -246,6 +546,8 @@ async def get_stats():
     """Get notepad statistics"""
     total = await db.notepads.count_documents({})
     guest = await db.notepads.count_documents({"account_type": "guest"})
+    user_notepads = await db.notepads.count_documents({"account_type": "user"})
+    total_users = await db.users.count_documents({})
     
     now = datetime.utcnow()
     expiring_soon = await db.notepads.count_documents({
@@ -261,12 +563,15 @@ async def get_stats():
     return {
         "total_notepads": total,
         "guest_notepads": guest,
+        "user_notepads": user_notepads,
+        "total_users": total_users,
         "expiring_soon": expiring_soon,
         "expired_awaiting_cleanup": expired
     }
 
 
-# Landing Page - Enter code to view notepad
+# ==================== Web Pages ====================
+
 @api_router.get("/", response_class=HTMLResponse)
 async def landing_page():
     """Landing page where users enter their code"""
@@ -381,10 +686,9 @@ async def landing_page():
     return HTMLResponse(content=html_content)
 
 
-# Web View Route - HTML page for viewing notepad
 @api_router.get("/notepad/{code}/view", response_class=HTMLResponse)
 async def view_notepad(code: str):
-    """Web view of notepad - uses JavaScript polling to update without page refresh"""
+    """Web view of notepad"""
     notepad = await db.notepads.find_one({"code": code.lower()})
     if not notepad:
         return HTMLResponse(
@@ -396,7 +700,6 @@ async def view_notepad(code: str):
             status_code=404
         )
     
-    # Check if expired
     expires_at = notepad.get("expires_at")
     if expires_at and is_expired(expires_at):
         return HTMLResponse(
@@ -412,41 +715,46 @@ async def view_notepad(code: str):
         )
     
     notepad_code = notepad.get("code")
+    account_type = notepad.get("account_type", "guest")
     
-    # Calculate expiration info
-    if not expires_at:
+    if expires_at is None and account_type != "premium":
         created_at = notepad.get("created_at", datetime.utcnow())
         if isinstance(created_at, str):
             created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-        expires_at = created_at + timedelta(days=GUEST_EXPIRATION_DAYS)
+        if account_type == "user":
+            expires_at = created_at + timedelta(days=USER_EXPIRATION_DAYS)
+        else:
+            expires_at = created_at + timedelta(days=GUEST_EXPIRATION_DAYS)
     
-    days_remaining = calculate_days_remaining(expires_at)
-    is_expiring_soon = days_remaining <= EXPIRATION_WARNING_DAYS
-    expiration_date_str = expires_at.strftime("%B %d, %Y")
+    days_remaining = calculate_days_remaining(expires_at) if expires_at else None
+    is_expiring_soon = days_remaining is not None and days_remaining <= EXPIRATION_WARNING_DAYS
     
-    # Build expiration banner HTML
-    if is_expiring_soon:
-        expiration_banner = f'''<div class="expiration-banner warning">
-            <span class="expiration-icon">⚠️</span>
-            <span>Expires in {days_remaining} day{"s" if days_remaining != 1 else ""} ({expiration_date_str})</span>
-        </div>'''
+    if expires_at:
+        expiration_date_str = expires_at.strftime("%B %d, %Y")
+        if is_expiring_soon:
+            expiration_banner = f'''<div class="expiration-banner warning">
+                <span class="expiration-icon">⚠️</span>
+                <span>Expires in {days_remaining} day{"s" if days_remaining != 1 else ""} ({expiration_date_str})</span>
+            </div>'''
+        else:
+            expiration_banner = f'''<div class="expiration-banner">
+                <span class="expiration-icon">📅</span>
+                <span>Expires {expiration_date_str} ({days_remaining} days)</span>
+            </div>'''
     else:
-        expiration_banner = f'''<div class="expiration-banner">
-            <span class="expiration-icon">📅</span>
-            <span>Expires {expiration_date_str} ({days_remaining} days)</span>
+        expiration_banner = '''<div class="expiration-banner premium">
+            <span class="expiration-icon">⭐</span>
+            <span>Premium notepad - Never expires</span>
         </div>'''
     
-    # Pre-render the initial entries server-side
     entries_html = ""
     for entry in reversed(notepad.get("entries", [])):
         timestamp = entry.get("timestamp", datetime.utcnow())
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
         time_str = timestamp.strftime("%H:%M:%S")
-        # Escape HTML properly
         text = entry.get("text", "")
         text_display = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("\n", "<br>")
-        # For the data attribute, HTML-encode the text (including single quotes)
         text_data = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
         entries_html += f'''<div class="entry">
             <div class="entry-header">
@@ -517,6 +825,11 @@ async def view_notepad(code: str):
             background: rgba(245, 158, 11, 0.15);
             color: #fbbf24;
             border: 1px solid rgba(245, 158, 11, 0.3);
+        }}
+        .expiration-banner.premium {{
+            background: rgba(168, 85, 247, 0.15);
+            color: #c084fc;
+            border: 1px solid rgba(168, 85, 247, 0.3);
         }}
         .expiration-icon {{ font-size: 1rem; }}
         .status {{
@@ -629,7 +942,6 @@ async def view_notepad(code: str):
                 return;
             }}
             
-            // Only re-render if count changed
             if (entries.length !== lastCount) {{
                 var html = '';
                 for (var i = entries.length - 1; i >= 0; i--) {{
@@ -663,7 +975,6 @@ async def view_notepad(code: str):
                 }});
         }}
         
-        // Poll every 3 seconds
         setInterval(poll, 3000);
     </script>
 </body>
@@ -672,13 +983,11 @@ async def view_notepad(code: str):
     return HTMLResponse(content=html_content)
 
 
-# Health check
 @api_router.get("/health")
 async def health():
     return {"status": "healthy", "service": "PasteBridge API"}
 
 
-# Include the router in the main app
 app.include_router(api_router)
 
 app.add_middleware(
@@ -689,7 +998,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
