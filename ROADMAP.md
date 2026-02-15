@@ -54,29 +54,31 @@ class Notepad(BaseModel):
 
 ---
 
-## Phase 3: User Authentication
-**Status: PLANNED**
-**Target: Sprint 3-4**
+## Phase 3: User Authentication ✅
+**Status: COMPLETE (Feb 2026)**
 
-### Features:
-- [ ] User registration (email/password)
-- [ ] User login with JWT tokens
-- [ ] Social login (Google OAuth via Emergent)
-- [ ] Link existing guest notepads to new account
-- [ ] User profile management
-- [ ] Password reset flow
-- [ ] Session management
+### Features Implemented:
+- [x] User registration (email/password)
+- [x] User login with JWT tokens (30-day expiration)
+- [x] Link existing guest notepads to user account
+- [x] User profile management (name update)
+- [x] Password change flow
+- [x] Auth state persistence (SecureStore on native, AsyncStorage on web)
+- [ ] Social login (Google OAuth via Emergent) - FUTURE
+- [ ] Password reset flow - FUTURE
 
 ### Backend Changes:
-- New `users` collection in MongoDB
-- JWT token generation and validation
-- User-notepad relationship
+- `users` collection in MongoDB
+- JWT token generation and validation (python-jose)
+- Password hashing (passlib/bcrypt)
+- Endpoints: register, login, /me, profile update, change-password, user notepads, link-notepad
 
 ### Frontend Changes:
-- Login/Register screens
-- Auth context provider
+- AuthContext provider with global state
+- Auth modal (login/register forms)
+- Profile modal with logout
+- Guest banner prompting sign-up
 - Secure token storage (expo-secure-store)
-- Protected routes
 
 ---
 
