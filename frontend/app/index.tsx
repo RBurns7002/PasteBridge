@@ -1540,4 +1540,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
   },
+
+  // Claim Modal Styles
+  claimModalContent: {
+    backgroundColor: '#1a1a2e',
+    borderRadius: 24,
+    padding: 32,
+    marginHorizontal: 32,
+    alignItems: 'center',
+  },
+  claimTitle: {
+    color: '#ffffff',
+    fontSize: 20,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  claimDescription: {
+    color: '#a1a1aa',
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  claimSkipBtn: {
+    marginTop: 16,
+    paddingVertical: 8,
+  },
+  claimSkipText: {
+    color: '#71717a',
+    fontSize: 14,
+  },
 });
