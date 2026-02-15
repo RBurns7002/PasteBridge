@@ -1375,6 +1375,17 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
   },
+  linkedBadge: {
+    backgroundColor: '#22c55e',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  linkedBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '600',
+  },
   historyMeta: {
     fontSize: 12,
     color: '#71717a',
