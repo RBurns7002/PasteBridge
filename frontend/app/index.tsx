@@ -11,12 +11,16 @@ import {
   Vibration,
   FlatList,
   Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  ScrollView,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from './context/AuthContext';
 
 const EXPO_PUBLIC_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 const STORAGE_KEY = 'pastebridge_current_session';
@@ -38,6 +42,7 @@ interface NotepadSession {
   expires_at: string | null;
   days_remaining: number | null;
   is_expiring_soon: boolean;
+  user_id: string | null;
 }
 
 interface NotepadHistoryItem {
@@ -50,6 +55,8 @@ interface NotepadHistoryItem {
 }
 
 export default function Index() {
+  const { user, token, isLoading: authLoading, login, register, logout } = useAuth();
+  
   const [session, setSession] = useState<NotepadSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -59,12 +66,25 @@ export default function Index() {
   const [historyModalVisible, setHistoryModalVisible] = useState(false);
   const [history, setHistory] = useState<NotepadHistoryItem[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  
+  // Auth modal state
+  const [authModalVisible, setAuthModalVisible] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authName, setAuthName] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [authLoading2, setAuthLoading2] = useState(false);
+
+  // Profile modal state
+  const [profileModalVisible, setProfileModalVisible] = useState(false);
 
   useEffect(() => {
-    loadOrCreateSession();
-  }, []);
+    if (!authLoading) {
+      loadOrCreateSession();
+    }
+  }, [authLoading, user]);
 
-  // Load notepad history from storage
   const loadHistory = async (): Promise<NotepadHistoryItem[]> => {
     try {
       const historyJson = await AsyncStorage.getItem(HISTORY_KEY);
@@ -77,12 +97,9 @@ export default function Index() {
     return [];
   };
 
-  // Save notepad to history
   const saveToHistory = async (notepad: NotepadSession) => {
     try {
       const currentHistory = await loadHistory();
-      
-      // Check if already exists
       const existingIndex = currentHistory.findIndex(h => h.code === notepad.code);
       
       const historyItem: NotepadHistoryItem = {
@@ -95,16 +112,12 @@ export default function Index() {
       };
       
       if (existingIndex >= 0) {
-        // Update existing
         currentHistory[existingIndex] = historyItem;
       } else {
-        // Add new at the beginning
         currentHistory.unshift(historyItem);
       }
       
-      // Keep only last 50 notepads
       const trimmedHistory = currentHistory.slice(0, 50);
-      
       await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(trimmedHistory));
       setHistory(trimmedHistory);
     } catch (err) {
@@ -112,7 +125,6 @@ export default function Index() {
     }
   };
 
-  // Remove notepad from history
   const removeFromHistory = async (code: string) => {
     try {
       const currentHistory = await loadHistory();
@@ -129,15 +141,18 @@ export default function Index() {
       setLoading(true);
       setError('');
 
-      // Load history
       const savedHistory = await loadHistory();
       setHistory(savedHistory);
 
       const savedSession = await AsyncStorage.getItem(STORAGE_KEY);
       if (savedSession) {
         const parsed = JSON.parse(savedSession);
+        const headers: any = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        
         const response = await fetch(
-          `${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${parsed.code}`
+          `${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${parsed.code}`,
+          { headers }
         );
         if (response.ok) {
           const data = await response.json();
@@ -146,7 +161,6 @@ export default function Index() {
           setLoading(false);
           return;
         } else if (response.status === 410) {
-          // Notepad expired, remove from storage and create new
           await AsyncStorage.removeItem(STORAGE_KEY);
           await removeFromHistory(parsed.code);
         }
@@ -164,9 +178,12 @@ export default function Index() {
   const createNewSession = async () => {
     try {
       setError('');
+      const headers: any = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      
       const response = await fetch(`${EXPO_PUBLIC_BACKEND_URL}/api/notepad`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
       });
 
       if (!response.ok) throw new Error('Failed to create notepad');
@@ -191,7 +208,6 @@ export default function Index() {
       const response = await fetch(`${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${code}`);
       
       if (response.status === 410) {
-        // Notepad expired
         await removeFromHistory(code);
         Alert.alert('Expired', 'This notepad has expired and is no longer available.');
         setLoading(false);
@@ -199,7 +215,6 @@ export default function Index() {
       }
       
       if (!response.ok) {
-        // Notepad no longer exists, remove from history
         await removeFromHistory(code);
         setError('Notepad not found');
         setLoading(false);
@@ -263,7 +278,6 @@ export default function Index() {
       setSuccessMessage('Sent!');
       Vibration.vibrate(50);
 
-      // Update history with new entry count
       await saveToHistory(updatedNotepad);
 
       setTimeout(() => setSuccessMessage(''), 2000);
@@ -342,7 +356,6 @@ export default function Index() {
     setLoadingHistory(true);
     const savedHistory = await loadHistory();
     
-    // Validate each notepad still exists and update entry counts
     const validatedHistory: NotepadHistoryItem[] = [];
     for (const item of savedHistory) {
       try {
@@ -356,7 +369,6 @@ export default function Index() {
             is_expiring_soon: data.is_expiring_soon,
           });
         }
-        // Skip expired (410) or not found (404) notepads
       } catch {
         // Skip invalid notepads
       }
@@ -382,6 +394,82 @@ export default function Index() {
         onPress: () => removeFromHistory(code),
       },
     ]);
+  };
+
+  const handleAuth = async () => {
+    setAuthError('');
+    setAuthLoading2(true);
+
+    try {
+      if (authMode === 'login') {
+        const result = await login(authEmail, authPassword);
+        if (result.success) {
+          setAuthModalVisible(false);
+          setAuthEmail('');
+          setAuthPassword('');
+          // Reload session with new auth
+          loadOrCreateSession();
+        } else {
+          setAuthError(result.error || 'Login failed');
+        }
+      } else {
+        const result = await register(authEmail, authPassword, authName);
+        if (result.success) {
+          setAuthModalVisible(false);
+          setAuthEmail('');
+          setAuthPassword('');
+          setAuthName('');
+          // Reload session with new auth
+          loadOrCreateSession();
+        } else {
+          setAuthError(result.error || 'Registration failed');
+        }
+      }
+    } finally {
+      setAuthLoading2(false);
+    }
+  };
+
+  const handleLogout = () => {
+    Alert.alert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Logout',
+        style: 'destructive',
+        onPress: async () => {
+          await logout();
+          setProfileModalVisible(false);
+        },
+      },
+    ]);
+  };
+
+  const linkCurrentNotepad = async () => {
+    if (!session || !token) return;
+
+    try {
+      const response = await fetch(`${EXPO_PUBLIC_BACKEND_URL}/api/auth/link-notepad`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ code: session.code }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setSession(data);
+        await saveToHistory(data);
+        setSuccessMessage('Notepad linked!');
+        setTimeout(() => setSuccessMessage(''), 2000);
+      } else {
+        setError(data.detail || 'Failed to link');
+      }
+    } catch (err) {
+      setError('Connection error');
+    }
   };
 
   const formatDate = (dateStr: string) => {
@@ -449,8 +537,7 @@ export default function Index() {
     );
   };
 
-  // Loading state
-  if (loading) {
+  if (loading || authLoading) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar style="light" />
@@ -462,7 +549,6 @@ export default function Index() {
     );
   }
 
-  // Main UI
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
@@ -470,13 +556,41 @@ export default function Index() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>PasteBridge</Text>
-        <TouchableOpacity
-          style={styles.historyBtn}
-          onPress={openHistoryModal}
-        >
-          <Ionicons name="time-outline" size={24} color="#60a5fa" />
-        </TouchableOpacity>
+        <View style={styles.headerRight}>
+          <TouchableOpacity
+            style={styles.headerBtn}
+            onPress={openHistoryModal}
+          >
+            <Ionicons name="time-outline" size={22} color="#60a5fa" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerBtn}
+            onPress={() => user ? setProfileModalVisible(true) : setAuthModalVisible(true)}
+          >
+            <Ionicons 
+              name={user ? "person" : "person-outline"} 
+              size={22} 
+              color={user ? "#22c55e" : "#60a5fa"} 
+            />
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {/* User Status Banner */}
+      {user ? (
+        <View style={styles.userBanner}>
+          <Ionicons name="checkmark-circle" size={16} color="#22c55e" />
+          <Text style={styles.userBannerText}>Logged in as {user.name || user.email}</Text>
+        </View>
+      ) : (
+        <TouchableOpacity 
+          style={styles.guestBanner}
+          onPress={() => setAuthModalVisible(true)}
+        >
+          <Ionicons name="person-outline" size={16} color="#fbbf24" />
+          <Text style={styles.guestBannerText}>Guest mode • Tap to sign up for longer storage</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Expiration Warning Banner */}
       {session?.is_expiring_soon && (
@@ -497,7 +611,6 @@ export default function Index() {
           </TouchableOpacity>
           <Text style={styles.codeHint}>Type this at the website on your PC</Text>
           
-          {/* Expiration info (non-warning) */}
           {!session.is_expiring_soon && session.days_remaining && (
             <Text style={styles.expirationInfo}>
               Available for {session.days_remaining} days
@@ -513,6 +626,12 @@ export default function Index() {
               <Ionicons name="share-outline" size={18} color="#60a5fa" />
               <Text style={styles.codeActionText}>Share</Text>
             </TouchableOpacity>
+            {user && !session.user_id && (
+              <TouchableOpacity style={styles.codeActionBtn} onPress={linkCurrentNotepad}>
+                <Ionicons name="link-outline" size={18} color="#60a5fa" />
+                <Text style={styles.codeActionText}>Link</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       )}
@@ -579,10 +698,161 @@ export default function Index() {
           1. Go to the website on your PC{"\n"}
           2. Enter the code shown above{"\n"}
           3. Copy text on your phone{"\n"}
-          4. Tap "Capture & Send"{"\n"}
-          5. Text appears on your PC!
+          4. Tap "Capture & Send"
         </Text>
       </View>
+
+      {/* Auth Modal */}
+      <Modal
+        visible={authModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setAuthModalVisible(false)}
+      >
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.authModalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {authMode === 'login' ? 'Sign In' : 'Create Account'}
+              </Text>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setAuthModalVisible(false)}
+              >
+                <Ionicons name="close" size={24} color="#a1a1aa" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.authForm}>
+              {authMode === 'register' && (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Name</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Your name"
+                    placeholderTextColor="#52525b"
+                    value={authName}
+                    onChangeText={setAuthName}
+                    autoCapitalize="words"
+                  />
+                </View>
+              )}
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Email</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="you@example.com"
+                  placeholderTextColor="#52525b"
+                  value={authEmail}
+                  onChangeText={setAuthEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Password</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="••••••••"
+                  placeholderTextColor="#52525b"
+                  value={authPassword}
+                  onChangeText={setAuthPassword}
+                  secureTextEntry
+                />
+              </View>
+
+              {authError ? (
+                <Text style={styles.authError}>{authError}</Text>
+              ) : null}
+
+              <TouchableOpacity
+                style={[styles.authSubmitBtn, authLoading2 && styles.authSubmitBtnDisabled]}
+                onPress={handleAuth}
+                disabled={authLoading2}
+              >
+                {authLoading2 ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.authSubmitBtnText}>
+                    {authMode === 'login' ? 'Sign In' : 'Create Account'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.authSwitchBtn}
+                onPress={() => {
+                  setAuthMode(authMode === 'login' ? 'register' : 'login');
+                  setAuthError('');
+                }}
+              >
+                <Text style={styles.authSwitchText}>
+                  {authMode === 'login' 
+                    ? "Don't have an account? Sign up" 
+                    : 'Already have an account? Sign in'}
+                </Text>
+              </TouchableOpacity>
+
+              <View style={styles.authBenefits}>
+                <Text style={styles.authBenefitsTitle}>Benefits of signing up:</Text>
+                <Text style={styles.authBenefit}>• Extended notepad storage (1 year)</Text>
+                <Text style={styles.authBenefit}>• Sync notepads across devices</Text>
+                <Text style={styles.authBenefit}>• Link existing notepads</Text>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Profile Modal */}
+      <Modal
+        visible={profileModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setProfileModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.profileModalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Profile</Text>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setProfileModalVisible(false)}
+              >
+                <Ionicons name="close" size={24} color="#a1a1aa" />
+              </TouchableOpacity>
+            </View>
+
+            {user && (
+              <View style={styles.profileInfo}>
+                <View style={styles.profileAvatar}>
+                  <Ionicons name="person" size={40} color="#60a5fa" />
+                </View>
+                <Text style={styles.profileName}>{user.name || 'User'}</Text>
+                <Text style={styles.profileEmail}>{user.email}</Text>
+                <View style={styles.profileBadge}>
+                  <Text style={styles.profileBadgeText}>
+                    {user.account_type === 'premium' ? '⭐ Premium' : '👤 User'}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={styles.profileLogoutBtn}
+              onPress={handleLogout}
+            >
+              <Ionicons name="log-out-outline" size={20} color="#ef4444" />
+              <Text style={styles.profileLogoutText}>Logout</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* History Modal */}
       <Modal
@@ -604,7 +874,7 @@ export default function Index() {
             </View>
 
             <Text style={styles.modalSubtitle}>
-              Guest notepads expire after 90 days
+              {user ? 'User notepads last 1 year' : 'Guest notepads expire after 90 days'}
             </Text>
 
             {loadingHistory ? (
@@ -667,17 +937,51 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 12,
   },
   title: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: 'bold',
     color: '#60a5fa',
   },
-  historyBtn: {
+  headerRight: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  headerBtn: {
     padding: 8,
     backgroundColor: 'rgba(96, 165, 250, 0.1)',
     borderRadius: 10,
+  },
+  userBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginHorizontal: 20,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  userBannerText: {
+    color: '#22c55e',
+    fontSize: 13,
+  },
+  guestBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginHorizontal: 20,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  guestBannerText: {
+    color: '#fbbf24',
+    fontSize: 13,
   },
   expirationBanner: {
     flexDirection: 'row',
@@ -685,7 +989,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     marginHorizontal: 20,
-    marginBottom: 12,
+    marginBottom: 8,
     paddingVertical: 10,
     paddingHorizontal: 16,
     backgroundColor: 'rgba(245, 158, 11, 0.15)',
@@ -702,59 +1006,59 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     backgroundColor: 'rgba(96, 165, 250, 0.08)',
     borderRadius: 20,
-    padding: 24,
+    padding: 20,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(96, 165, 250, 0.2)',
   },
   codeLabel: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#71717a',
     letterSpacing: 2,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   codeText: {
-    fontSize: 36,
+    fontSize: 32,
     fontWeight: '700',
     color: '#60a5fa',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     letterSpacing: 2,
   },
   codeHint: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#52525b',
-    marginTop: 8,
+    marginTop: 6,
   },
   expirationInfo: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#71717a',
-    marginTop: 8,
+    marginTop: 6,
   },
   codeActions: {
     flexDirection: 'row',
-    gap: 16,
-    marginTop: 16,
+    gap: 12,
+    marginTop: 14,
   },
   codeActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    gap: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     backgroundColor: 'rgba(96, 165, 250, 0.1)',
     borderRadius: 8,
   },
   codeActionText: {
     color: '#60a5fa',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
   },
   captureButton: {
     marginHorizontal: 20,
-    marginTop: 24,
+    marginTop: 20,
     backgroundColor: '#3b82f6',
     borderRadius: 24,
-    paddingVertical: 36,
+    paddingVertical: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -763,36 +1067,36 @@ const styles = StyleSheet.create({
   },
   captureButtonText: {
     color: '#ffffff',
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: 'bold',
-    marginTop: 12,
+    marginTop: 10,
   },
   statusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    marginTop: 16,
-    height: 24,
+    marginTop: 14,
+    height: 22,
   },
   errorText: {
     color: '#ef4444',
-    fontSize: 14,
+    fontSize: 13,
   },
   successText: {
     color: '#22c55e',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   hintText: {
     color: '#52525b',
-    fontSize: 14,
+    fontSize: 13,
   },
   bottomActions: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 24,
-    marginTop: 24,
+    gap: 20,
+    marginTop: 20,
   },
   bottomBtn: {
     alignItems: 'center',
@@ -800,7 +1104,7 @@ const styles = StyleSheet.create({
   },
   bottomBtnText: {
     color: '#71717a',
-    fontSize: 12,
+    fontSize: 11,
   },
   instructions: {
     position: 'absolute',
@@ -808,18 +1112,18 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     backgroundColor: 'rgba(0,0,0,0.6)',
-    padding: 20,
+    padding: 16,
   },
   instructionsTitle: {
     color: '#71717a',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
-    marginBottom: 6,
+    marginBottom: 4,
   },
   instructionsText: {
     color: '#52525b',
-    fontSize: 11,
-    lineHeight: 18,
+    fontSize: 10,
+    lineHeight: 16,
   },
 
   // Modal Styles
@@ -835,6 +1139,21 @@ const styles = StyleSheet.create({
     paddingTop: 20,
     paddingBottom: 40,
     maxHeight: '80%',
+  },
+  authModalContent: {
+    backgroundColor: '#1a1a2e',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 20,
+    paddingBottom: 20,
+    maxHeight: '90%',
+  },
+  profileModalContent: {
+    backgroundColor: '#1a1a2e',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 20,
+    paddingBottom: 40,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -972,5 +1291,124 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
     marginTop: 16,
+  },
+
+  // Auth Modal Styles
+  authForm: {
+    paddingHorizontal: 20,
+  },
+  inputGroup: {
+    marginBottom: 16,
+  },
+  inputLabel: {
+    color: '#a1a1aa',
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  textInput: {
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderRadius: 12,
+    padding: 14,
+    color: '#ffffff',
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  authError: {
+    color: '#ef4444',
+    fontSize: 14,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  authSubmitBtn: {
+    backgroundColor: '#3b82f6',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  authSubmitBtnDisabled: {
+    backgroundColor: '#1e3a5f',
+  },
+  authSubmitBtnText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  authSwitchBtn: {
+    marginTop: 16,
+    alignItems: 'center',
+  },
+  authSwitchText: {
+    color: '#60a5fa',
+    fontSize: 14,
+  },
+  authBenefits: {
+    marginTop: 24,
+    padding: 16,
+    backgroundColor: 'rgba(96, 165, 250, 0.1)',
+    borderRadius: 12,
+  },
+  authBenefitsTitle: {
+    color: '#60a5fa',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  authBenefit: {
+    color: '#a1a1aa',
+    fontSize: 13,
+    marginBottom: 4,
+  },
+
+  // Profile Modal Styles
+  profileInfo: {
+    alignItems: 'center',
+    paddingVertical: 24,
+  },
+  profileAvatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(96, 165, 250, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  profileName: {
+    color: '#ffffff',
+    fontSize: 20,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  profileEmail: {
+    color: '#71717a',
+    fontSize: 14,
+    marginBottom: 12,
+  },
+  profileBadge: {
+    backgroundColor: 'rgba(96, 165, 250, 0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  profileBadgeText: {
+    color: '#60a5fa',
+    fontSize: 13,
+  },
+  profileLogoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginHorizontal: 20,
+    paddingVertical: 14,
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderRadius: 12,
+  },
+  profileLogoutText: {
+    color: '#ef4444',
+    fontSize: 16,
+    fontWeight: '500',
   },
 });
