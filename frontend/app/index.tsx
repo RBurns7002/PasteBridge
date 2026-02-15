@@ -469,10 +469,51 @@ export default function Index() {
         setSuccessMessage('Notepad linked!');
         setTimeout(() => setSuccessMessage(''), 2000);
       } else {
-        setError(data.detail || 'Failed to link');
+        if (data.detail?.includes('already linked')) {
+          setSuccessMessage('Already linked');
+          setTimeout(() => setSuccessMessage(''), 2000);
+        } else {
+          setError(data.detail || 'Failed to link');
+        }
       }
     } catch (err) {
       setError('Connection error');
+    }
+  };
+
+  const claimAllNotepads = async () => {
+    if (!token) return;
+    setClaiming(true);
+
+    try {
+      const localHistory = await loadHistory();
+      const codes = localHistory.map(h => h.code);
+
+      const response = await fetch(`${EXPO_PUBLIC_BACKEND_URL}/api/auth/link-notepads`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ codes }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setClaimModalVisible(false);
+        setSuccessMessage(`${data.linked_count} notepad${data.linked_count !== 1 ? 's' : ''} claimed!`);
+        setTimeout(() => setSuccessMessage(''), 3000);
+        // Refresh session to pick up updated user_id
+        loadOrCreateSession();
+      } else {
+        setError('Failed to claim notepads');
+        setClaimModalVisible(false);
+      }
+    } catch (err) {
+      setError('Connection error');
+      setClaimModalVisible(false);
+    } finally {
+      setClaiming(false);
     }
   };
 
