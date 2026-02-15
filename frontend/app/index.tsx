@@ -52,6 +52,7 @@ interface NotepadHistoryItem {
   entry_count: number;
   days_remaining?: number;
   is_expiring_soon?: boolean;
+  user_id?: string;
 }
 
 export default function Index() {
