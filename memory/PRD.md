@@ -31,16 +31,15 @@ An Android application that listens to the device's clipboard. When text is copi
 - AuthContext with SecureStore (native) / AsyncStorage (web) token storage
 - Auth modal UI in mobile app (login/register forms)
 - Authenticated notepad creation (linked to user, 365-day expiration)
-- Link guest notepads to user account
+- Link guest notepads to user account (single + bulk)
 - Get user's notepads endpoint
 - Profile modal with logout
-- **Testing**: 27/27 backend tests passed (100%)
+- **Bulk "Claim All Notepads"** after login/registration
+- **Server-side notepad merge** in history modal
+- **"Linked" badge** on history items
+- **Testing**: 47/47 backend tests passed across 2 iterations (100%)
 
 ## Prioritized Backlog
-
-### P0 - Next Up
-- Link Notepads to User Accounts (auto-associate on create when logged in)
-- Migrate Guest Notepads to User Account after login
 
 ### P1 - Phase 4: Premium Features
 - Subscription tiers (Free/Pro/Business)

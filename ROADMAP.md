@@ -60,10 +60,14 @@ class Notepad(BaseModel):
 ### Features Implemented:
 - [x] User registration (email/password)
 - [x] User login with JWT tokens (30-day expiration)
-- [x] Link existing guest notepads to user account
+- [x] Link existing guest notepads to user account (single + bulk)
 - [x] User profile management (name update)
 - [x] Password change flow
 - [x] Auth state persistence (SecureStore on native, AsyncStorage on web)
+- [x] Auto-link notepads to user on authenticated creation
+- [x] Bulk "Claim All Notepads" after login/registration
+- [x] Merge server-side user notepads with local history
+- [x] "Linked" badge on history items
 - [ ] Social login (Google OAuth via Emergent) - FUTURE
 - [ ] Password reset flow - FUTURE
 
@@ -71,7 +75,7 @@ class Notepad(BaseModel):
 - `users` collection in MongoDB
 - JWT token generation and validation (python-jose)
 - Password hashing (passlib/bcrypt)
-- Endpoints: register, login, /me, profile update, change-password, user notepads, link-notepad
+- Endpoints: register, login, /me, profile update, change-password, user notepads, link-notepad, link-notepads (bulk)
 
 ### Frontend Changes:
 - AuthContext provider with global state
@@ -79,6 +83,8 @@ class Notepad(BaseModel):
 - Profile modal with logout
 - Guest banner prompting sign-up
 - Secure token storage (expo-secure-store)
+- Claim All Notepads modal after login
+- Server-side notepad merge in history view
 
 ---
 
