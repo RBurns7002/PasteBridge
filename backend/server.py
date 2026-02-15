@@ -241,6 +241,10 @@ class LinkNotepadRequest(BaseModel):
     code: str
 
 
+class BulkLinkRequest(BaseModel):
+    codes: List[str]
+
+
 class PasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str
@@ -429,6 +433,44 @@ async def link_notepad(data: LinkNotepadRequest, user: dict = Depends(require_au
     
     updated = await db.notepads.find_one({"code": data.code.lower()})
     return build_notepad_response(updated)
+
+
+@api_router.post("/auth/link-notepads")
+async def bulk_link_notepads(data: BulkLinkRequest, user: dict = Depends(require_auth)):
+    """Bulk link guest notepads to user account"""
+    linked = []
+    skipped = []
+    new_expires = get_expiration_date(user.get("account_type", "user"))
+
+    for code in data.codes:
+        code_lower = code.lower().strip()
+        notepad = await db.notepads.find_one({"code": code_lower})
+        if not notepad:
+            skipped.append({"code": code_lower, "reason": "not found"})
+            continue
+        if notepad.get("user_id"):
+            if notepad["user_id"] == user["id"]:
+                skipped.append({"code": code_lower, "reason": "already yours"})
+            else:
+                skipped.append({"code": code_lower, "reason": "belongs to another user"})
+            continue
+        await db.notepads.update_one(
+            {"code": code_lower},
+            {"$set": {
+                "user_id": user["id"],
+                "account_type": user.get("account_type", "user"),
+                "expires_at": new_expires,
+                "updated_at": datetime.utcnow()
+            }}
+        )
+        linked.append(code_lower)
+
+    return {
+        "linked_count": len(linked),
+        "skipped_count": len(skipped),
+        "linked": linked,
+        "skipped": skipped
+    }
 
 
 # ==================== Notepad Routes ====================
