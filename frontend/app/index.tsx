@@ -572,6 +572,7 @@ export default function Index() {
   const renderHistoryItem = ({ item }: { item: NotepadHistoryItem }) => {
     const isActive = session?.code === item.code;
     const isExpiringSoon = item.is_expiring_soon || false;
+    const isLinked = !!item.user_id;
     
     return (
       <TouchableOpacity
@@ -591,7 +592,12 @@ export default function Index() {
                 <Text style={styles.activeBadgeText}>Active</Text>
               </View>
             )}
-            {isExpiringSoon && !isActive && (
+            {isLinked && !isActive && (
+              <View style={styles.linkedBadge}>
+                <Text style={styles.linkedBadgeText}>Linked</Text>
+              </View>
+            )}
+            {isExpiringSoon && !isActive && !isLinked && (
               <View style={styles.expiringBadge}>
                 <Text style={styles.expiringBadgeText}>Expiring</Text>
               </View>
