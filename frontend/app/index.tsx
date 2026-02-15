@@ -362,20 +362,51 @@ export default function Index() {
     const savedHistory = await loadHistory();
     
     const validatedHistory: NotepadHistoryItem[] = [];
+    const knownCodes = new Set<string>();
+
     for (const item of savedHistory) {
       try {
         const response = await fetch(`${EXPO_PUBLIC_BACKEND_URL}/api/notepad/${item.code}`);
         if (response.ok) {
           const data = await response.json();
+          knownCodes.add(item.code);
           validatedHistory.push({
             ...item,
             entry_count: data.entries.length,
             days_remaining: data.days_remaining,
             is_expiring_soon: data.is_expiring_soon,
+            user_id: data.user_id || undefined,
           });
         }
       } catch {
         // Skip invalid notepads
+      }
+    }
+
+    // Merge server-side user notepads that aren't in local history
+    if (token) {
+      try {
+        const response = await fetch(`${EXPO_PUBLIC_BACKEND_URL}/api/auth/notepads`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (response.ok) {
+          const serverNotepads = await response.json();
+          for (const np of serverNotepads) {
+            if (!knownCodes.has(np.code)) {
+              validatedHistory.push({
+                code: np.code,
+                created_at: np.created_at,
+                last_used: np.updated_at,
+                entry_count: np.entries.length,
+                days_remaining: np.days_remaining,
+                is_expiring_soon: np.is_expiring_soon,
+                user_id: np.user_id,
+              });
+            }
+          }
+        }
+      } catch {
+        // Server fetch failed, continue with local only
       }
     }
     
