@@ -76,6 +76,11 @@ export default function Index() {
   const [authError, setAuthError] = useState('');
   const [authLoading2, setAuthLoading2] = useState(false);
 
+  // Claim all modal state
+  const [claimModalVisible, setClaimModalVisible] = useState(false);
+  const [claimableCount, setClaimableCount] = useState(0);
+  const [claiming, setClaiming] = useState(false);
+
   // Profile modal state
   const [profileModalVisible, setProfileModalVisible] = useState(false);
 
