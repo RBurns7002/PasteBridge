@@ -406,29 +406,28 @@ export default function Index() {
     setAuthLoading2(true);
 
     try {
+      let result;
       if (authMode === 'login') {
-        const result = await login(authEmail, authPassword);
-        if (result.success) {
-          setAuthModalVisible(false);
-          setAuthEmail('');
-          setAuthPassword('');
-          // Reload session with new auth
-          loadOrCreateSession();
-        } else {
-          setAuthError(result.error || 'Login failed');
-        }
+        result = await login(authEmail, authPassword);
       } else {
-        const result = await register(authEmail, authPassword, authName);
-        if (result.success) {
-          setAuthModalVisible(false);
-          setAuthEmail('');
-          setAuthPassword('');
-          setAuthName('');
-          // Reload session with new auth
-          loadOrCreateSession();
-        } else {
-          setAuthError(result.error || 'Registration failed');
+        result = await register(authEmail, authPassword, authName);
+      }
+
+      if (result.success) {
+        setAuthModalVisible(false);
+        setAuthEmail('');
+        setAuthPassword('');
+        setAuthName('');
+        // Check for claimable guest notepads from local history
+        const localHistory = await loadHistory();
+        const unlinkedCodes = localHistory.filter(h => !h.user_id).map(h => h.code);
+        if (unlinkedCodes.length > 0) {
+          setClaimableCount(unlinkedCodes.length);
+          setClaimModalVisible(true);
         }
+        loadOrCreateSession();
+      } else {
+        setAuthError(result.error || (authMode === 'login' ? 'Login failed' : 'Registration failed'));
       }
     } finally {
       setAuthLoading2(false);
