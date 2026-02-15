@@ -996,6 +996,41 @@ export default function Index() {
           </View>
         </View>
       </Modal>
+
+      {/* Claim All Notepads Modal */}
+      <Modal
+        visible={claimModalVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setClaimModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.claimModalContent}>
+            <Ionicons name="link" size={40} color="#60a5fa" style={{ alignSelf: 'center', marginBottom: 16 }} />
+            <Text style={styles.claimTitle}>Claim Your Notepads</Text>
+            <Text style={styles.claimDescription}>
+              You have {claimableCount} notepad{claimableCount !== 1 ? 's' : ''} from guest mode. Link them to your account for extended storage (1 year).
+            </Text>
+            <TouchableOpacity
+              style={[styles.authSubmitBtn, claiming && styles.authSubmitBtnDisabled]}
+              onPress={claimAllNotepads}
+              disabled={claiming}
+            >
+              {claiming ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.authSubmitBtnText}>Claim All Notepads</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.claimSkipBtn}
+              onPress={() => setClaimModalVisible(false)}
+            >
+              <Text style={styles.claimSkipText}>Skip for now</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
