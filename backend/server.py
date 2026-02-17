@@ -2137,7 +2137,21 @@ logger = logging.getLogger(__name__)
 
 @app.on_event("startup")
 async def start_cron():
-    """Start background cleanup cron job"""
+    """Start background cleanup cron job and create database indexes"""
+    # Create indexes
+    await db.notepads.create_index("code", unique=True)
+    await db.notepads.create_index("user_id")
+    await db.notepads.create_index("expires_at")
+    await db.notepads.create_index("account_type")
+    await db.users.create_index("email", unique=True)
+    await db.users.create_index("id", unique=True)
+    await db.feedback.create_index("status")
+    await db.feedback.create_index("category")
+    await db.feedback.create_index([("created_at", -1)])
+    await db.webhooks.create_index("user_id")
+    await db.password_resets.create_index("token")
+    await db.password_resets.create_index("expires_at")
+    logging.getLogger(__name__).info("Database indexes created")
     asyncio.create_task(cleanup_cron())
     logging.getLogger("cron").info("Cleanup cron job started (every 6 hours)")
 
