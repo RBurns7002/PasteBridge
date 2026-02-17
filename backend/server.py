@@ -2138,13 +2138,13 @@ logger = logging.getLogger(__name__)
 @app.on_event("startup")
 async def start_cron():
     """Start background cleanup cron job and create database indexes"""
-    # Create indexes
-    await db.notepads.create_index("code", unique=True)
+    # Create indexes (sparse=True for unique to allow nulls)
+    await db.notepads.create_index("code", unique=True, sparse=True)
     await db.notepads.create_index("user_id")
     await db.notepads.create_index("expires_at")
     await db.notepads.create_index("account_type")
-    await db.users.create_index("email", unique=True)
-    await db.users.create_index("id", unique=True)
+    await db.users.create_index("email", unique=True, sparse=True)
+    await db.users.create_index("id", unique=True, sparse=True)
     await db.feedback.create_index("status")
     await db.feedback.create_index("category")
     await db.feedback.create_index([("created_at", -1)])
