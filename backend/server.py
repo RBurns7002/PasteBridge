@@ -258,6 +258,65 @@ class ProfileUpdateRequest(BaseModel):
     name: str
 
 
+class PushTokenRequest(BaseModel):
+    token: str
+
+
+class WebhookRequest(BaseModel):
+    url: str
+    events: List[str] = ["new_entry"]
+    secret: Optional[str] = None
+
+
+class SummarizeRequest(BaseModel):
+    max_length: Optional[int] = 500
+
+
+# ==================== Push Notification Helper ====================
+
+async def send_push_notification(push_token: str, title: str, body: str, data: dict = None):
+    """Send push notification via Expo's push service"""
+    message = {
+        "to": push_token,
+        "sound": "default",
+        "title": title,
+        "body": body,
+    }
+    if data:
+        message["data"] = data
+    try:
+        async with httpx.AsyncClient() as client_http:
+            await client_http.post(
+                "https://exp.host/--/api/v2/push/send",
+                json=message,
+                headers={"Content-Type": "application/json"}
+            )
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Push notification failed: {e}")
+
+
+# ==================== Background Cron Job ====================
+
+async def cleanup_cron():
+    """Background task that cleans up expired notepads every 6 hours"""
+    log = logging.getLogger("cron")
+    while True:
+        try:
+            await asyncio.sleep(6 * 60 * 60)  # 6 hours
+            now = datetime.utcnow()
+            result = await db.notepads.delete_many({
+                "expires_at": {"$lt": now},
+                "account_type": {"$in": ["guest", "user"]}
+            })
+            if result.deleted_count > 0:
+                log.info(f"Cron: cleaned up {result.deleted_count} expired notepads")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.error(f"Cron error: {e}")
+            await asyncio.sleep(60)
+
+
 def build_notepad_response(notepad: dict) -> NotepadResponse:
     """Build NotepadResponse with expiration info"""
     expires_at = notepad.get("expires_at")
