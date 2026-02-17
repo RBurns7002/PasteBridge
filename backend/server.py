@@ -1095,6 +1095,141 @@ async def summarize_notepad(code: str, request: SummarizeRequest = None):
         raise HTTPException(status_code=500, detail=f"AI summarization failed: {str(e)}")
 
 
+# ==================== Collaborative Notepad Routes ====================
+
+@api_router.post("/notepad/{code}/share")
+async def share_notepad(code: str, data: ShareNotepadRequest, user: dict = Depends(require_auth)):
+    """Share a notepad with another user by email"""
+    notepad = await db.notepads.find_one({"code": code.lower()})
+    if not notepad:
+        raise HTTPException(status_code=404, detail="Notepad not found")
+
+    if notepad.get("user_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Only the owner can share this notepad")
+
+    target_user = await db.users.find_one({"email": data.email.lower()})
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found with that email")
+
+    if target_user["id"] == user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot share with yourself")
+
+    collaborators = notepad.get("collaborators", [])
+    if target_user["id"] in collaborators:
+        return {"message": "User already has access", "code": code}
+
+    await db.notepads.update_one(
+        {"code": code.lower()},
+        {"$addToSet": {"collaborators": target_user["id"]}}
+    )
+
+    return {"message": f"Notepad shared with {data.email}", "code": code}
+
+
+@api_router.delete("/notepad/{code}/share/{email}")
+async def unshare_notepad(code: str, email: str, user: dict = Depends(require_auth)):
+    """Remove a collaborator from a notepad"""
+    notepad = await db.notepads.find_one({"code": code.lower()})
+    if not notepad:
+        raise HTTPException(status_code=404, detail="Notepad not found")
+    if notepad.get("user_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Only the owner can manage sharing")
+
+    target_user = await db.users.find_one({"email": email.lower()})
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    await db.notepads.update_one(
+        {"code": code.lower()},
+        {"$pull": {"collaborators": target_user["id"]}}
+    )
+    return {"message": f"Access removed for {email}"}
+
+
+@api_router.get("/notepad/{code}/collaborators")
+async def get_collaborators(code: str, user: dict = Depends(require_auth)):
+    """List collaborators for a notepad"""
+    notepad = await db.notepads.find_one({"code": code.lower()})
+    if not notepad:
+        raise HTTPException(status_code=404, detail="Notepad not found")
+
+    owner_id = notepad.get("user_id")
+    if owner_id != user["id"] and user["id"] not in notepad.get("collaborators", []):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    collaborator_ids = notepad.get("collaborators", [])
+    collaborators = []
+    for cid in collaborator_ids:
+        u = await db.users.find_one({"id": cid}, {"_id": 0, "id": 1, "email": 1, "name": 1})
+        if u:
+            collaborators.append(u)
+
+    owner = await db.users.find_one({"id": owner_id}, {"_id": 0, "id": 1, "email": 1, "name": 1})
+    return {"owner": owner, "collaborators": collaborators}
+
+
+@api_router.get("/auth/shared-notepads")
+async def get_shared_notepads(user: dict = Depends(require_auth)):
+    """Get notepads shared with the current user"""
+    notepads = await db.notepads.find(
+        {"collaborators": user["id"]},
+        {"_id": 0}
+    ).to_list(100)
+    return [build_notepad_response(n) for n in notepads]
+
+
+# ==================== Search & Filter ====================
+
+@api_router.post("/notepad/search")
+async def search_notepads(data: NotepadSearchRequest, user: dict = Depends(require_auth)):
+    """Search user's notepads by text content, code, or date range"""
+    query = {
+        "$or": [
+            {"user_id": user["id"]},
+            {"collaborators": user["id"]}
+        ]
+    }
+
+    if data.code:
+        query["code"] = {"$regex": data.code.lower(), "$options": "i"}
+
+    if data.query:
+        query["entries.text"] = {"$regex": data.query, "$options": "i"}
+
+    if data.date_from:
+        try:
+            from_dt = datetime.fromisoformat(data.date_from.replace('Z', '+00:00'))
+            query["created_at"] = {"$gte": from_dt}
+        except ValueError:
+            pass
+
+    if data.date_to:
+        try:
+            to_dt = datetime.fromisoformat(data.date_to.replace('Z', '+00:00'))
+            if "created_at" in query:
+                query["created_at"]["$lte"] = to_dt
+            else:
+                query["created_at"] = {"$lte": to_dt}
+        except ValueError:
+            pass
+
+    skip = (data.page - 1) * data.limit
+    total = await db.notepads.count_documents(query)
+    notepads = await db.notepads.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(data.limit).to_list(data.limit)
+
+    results = []
+    for n in notepads:
+        resp = build_notepad_response(n)
+        if data.query:
+            matching = [e for e in n.get("entries", []) if data.query.lower() in e.get("text", "").lower()]
+            resp["matching_entries"] = len(matching)
+            if matching:
+                resp["preview"] = matching[0]["text"][:200]
+        results.append(resp)
+
+    return {"items": results, "total": total, "page": data.page, "pages": (total + data.limit - 1) // data.limit}
+
+
 # ==================== Admin Routes ====================
 
 # --- Feedback Routes ---
