@@ -6,14 +6,15 @@ An Android application that listens to the device's clipboard. When text is copi
 ## Architecture
 - **Backend**: FastAPI + MongoDB (server.py)
 - **Frontend**: Expo (React Native) with expo-router
-- **Database**: MongoDB (notepads, users collections)
+- **Database**: MongoDB (notepads, users, webhooks collections)
 - **Auth**: JWT-based (python-jose, passlib/bcrypt)
+- **AI**: GPT-5.2 via emergentintegrations library
 - **CI/CD**: GitHub Actions for APK builds (Gradle)
 
 ## Core Files
 - `/app/backend/server.py` - All backend logic
 - `/app/frontend/app/index.tsx` - Main app screen
-- `/app/frontend/app/context/AuthContext.tsx` - Auth state management
+- `/app/frontend/app/context/AuthContext.tsx` - Auth + push notification state
 - `/app/frontend/app/_layout.tsx` - Root layout with AuthProvider
 - `/app/.github/workflows/build-apk.yml` - APK build workflow
 
@@ -23,39 +24,46 @@ An Android application that listens to the device's clipboard. When text is copi
 - Local notepad history (AsyncStorage), switch between notepads, max 50 items
 
 ### Phase 2: Guest Account Limits - DONE
-- 90-day expiration for guest notepads, expiration banners, admin cleanup endpoint
+- 90-day expiration for guest notepads, expiration banners
 
 ### Phase 3: User Authentication - DONE (Feb 15, 2026)
-- User registration/login with JWT tokens
-- Auth endpoints: register, login, /me, profile update, password change
-- AuthContext with SecureStore (native) / AsyncStorage (web) token storage
-- Auth modal UI in mobile app (login/register forms)
-- Authenticated notepad creation (linked to user, 365-day expiration)
-- Link guest notepads to user account (single + bulk)
-- Get user's notepads endpoint
-- Profile modal with logout
-- **Bulk "Claim All Notepads"** after login/registration
-- **Server-side notepad merge** in history modal
-- **"Linked" badge** on history items
-- **Testing**: 47/47 backend tests passed across 2 iterations (100%)
+- Registration/login with JWT, profile management, password change
+- Bulk "Claim All Notepads" after login
+- Server-side notepad merge in history, "Linked" badges
+- **Testing**: 47/47 backend tests passed
+
+### Phase 4: Premium Features - DONE (Feb 17, 2026)
+- **Push Notifications**: Expo push tokens registered on login, triggered on web notepad view
+- **Cron Job**: Background cleanup of expired notepads every 6 hours
+- **Workflow Automation**: Webhook CRUD (create, list, delete), fires on notepad append
+- **Export/Import**: Download notepad as .txt, .md, or .json
+- **AI Summarization**: GPT-5.2 powered notepad content summarization
+- **Testing**: 35/35 backend tests passed
 
 ## Prioritized Backlog
 
-### P1 - Phase 4: Premium Features
-- Subscription tiers (Free/Pro/Business)
-- AI summarization of notepad content
-- Workflow automation APIs
-- Export/import functionality
+### P1 - Subscription Tiers
+- Stripe integration for Free/Pro/Business plans
+- Premium notepads that never expire
 
 ### P2 - Technical Improvements
-- Backend cron job for expired notepad cleanup
 - Rate limiting
 - Pagination for large notepads
 - Database indexes
+- Social login (Google OAuth)
+- Password reset flow
 
 ## DB Schema
 - **notepads**: `{ id, code, owner_id, user_id, created_at, expires_at, account_type, entries: [{ text, timestamp }] }`
-- **users**: `{ id, email, password_hash, name, account_type, created_at, updated_at }`
+- **users**: `{ id, email, password_hash, name, account_type, push_tokens: [], created_at, updated_at }`
+- **webhooks**: `{ id, user_id, url, events: [], secret, active, created_at }`
+
+## API Endpoints
+- Auth: register, login, /me, profile, change-password, notepads, link-notepad, link-notepads, push-token
+- Webhooks: create, list, delete
+- Notepad: create, get, lookup, append, clear, export, summarize
+- Admin: cleanup-expired, stats
+- Web: landing page (/), notepad view
 
 ## Test Credentials
 - Email: test@test.com / Password: password123
