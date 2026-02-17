@@ -696,6 +696,13 @@ export default function Index() {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.headerBtn}
+            data-testid="feedback-btn"
+            onPress={() => setFeedbackModalVisible(true)}
+          >
+            <Ionicons name="chatbubble-ellipses-outline" size={22} color="#f59e0b" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerBtn}
             onPress={() => user ? setProfileModalVisible(true) : setAuthModalVisible(true)}
           >
             <Ionicons 
