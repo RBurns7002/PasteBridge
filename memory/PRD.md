@@ -6,10 +6,11 @@ An Android application that listens to the device's clipboard. When text is copi
 ## Architecture
 - **Backend**: FastAPI + MongoDB (server.py)
 - **Frontend**: Expo (React Native) with expo-router
-- **Database**: MongoDB (notepads, users, webhooks, feedback, payment_transactions)
-- **Auth**: JWT-based (python-jose, passlib/bcrypt)
-- **AI**: GPT-5.2 via emergentintegrations library
-- **Payments**: Stripe via emergentintegrations library
+- **Database**: MongoDB with 12 indexes (notepads, users, webhooks, feedback, password_resets, payment_transactions)
+- **Auth**: JWT + Google OAuth (Emergent Auth) + password reset
+- **AI**: GPT-5.2 via emergentintegrations
+- **Payments**: Stripe via emergentintegrations
+- **Security**: Rate limiting (in-memory), bcrypt password hashing
 - **CI/CD**: GitHub Actions for APK builds (Gradle)
 
 ## Core Files
@@ -25,47 +26,43 @@ An Android application that listens to the device's clipboard. When text is copi
 ### Phase 3: User Authentication - DONE (Feb 15, 2026)
 ### Phase 4: Premium Features - DONE (Feb 17, 2026)
 - Push notifications, Cron job, Webhooks, Export, AI Summarization
-
 ### Bug & Feedback System - DONE (Feb 17, 2026)
-- In-app feedback form (bug/feature_request/missing_feature/other)
-- Admin endpoints: list, filter, AI-summarize, status update
-- Feedback button in mobile app toolbar
-- **Testing**: 27/27 tests passed
-
+- In-app feedback form + admin dashboard with AI summary
 ### Stripe Subscriptions - DONE (Feb 17, 2026)
-- Free ($0): 5 notepads, 90-day storage
-- Pro ($4.99): Unlimited, 1-year, AI summarize, export
-- Business ($14.99): Unlimited, never-expire, webhooks, priority
-- Stripe checkout, status polling, webhook, success/cancel pages
-- Plans web page at /api/subscription/plans-page
+- Free/Pro/Business tiers with Stripe checkout
+### Technical Improvements - DONE (Feb 17, 2026)
+- **Rate limiting**: register (5/5min), login (10/5min), forgot-password (3/10min), google-session (10/5min)
+- **Pagination**: Feedback list with page/limit/total/pages
+- **Database indexes**: 12 indexes across 6 collections (sparse unique on code, email, id)
+- **Google OAuth**: Emergent Auth callback + session exchange
+- **Password reset**: Token-based with web reset page
+- **Admin dashboard**: Full web UI at /api/admin/dashboard
 
-### Web View Enhancements - DONE (Feb 17, 2026)
-- Export TXT/MD/JSON buttons on notepad view
-- AI Summarize button with inline results
+## Total Testing: 134/134 tests passed across 5 iterations (100%)
 
-## Total Testing: 109/109 tests passed across 4 iterations (100%)
-
-## DB Collections
-- **notepads**: id, code, owner_id, user_id, created_at, expires_at, account_type, entries
-- **users**: id, email, password_hash, name, account_type, push_tokens, subscription_plan
-- **webhooks**: id, user_id, url, events, secret, active
-- **feedback**: id, category, title, description, severity, user_id, user_email, status
-- **payment_transactions**: id, session_id, user_id, plan, amount, currency, payment_status, activated
+## DB Collections & Indexes
+- **notepads**: code (unique sparse), user_id, expires_at, account_type
+- **users**: email (unique sparse), id (unique sparse)
+- **feedback**: status, category, created_at (desc)
+- **webhooks**: user_id
+- **password_resets**: token, expires_at
+- **payment_transactions**: session_id
 
 ## API Endpoints
-- Auth: register, login, /me, profile, change-password, notepads, link-notepad(s), push-token
+- Auth: register, login, /me, profile, change-password, notepads, link-notepad(s), push-token, forgot-password, reset-password, google-callback, google-session
 - Webhooks: create, list, delete
 - Notepad: create, get, lookup, append, clear, export, summarize
-- Feedback: submit, list, summarize, update status
-- Subscription: plans, checkout, status, success page, plans page, webhook
-- Admin: cleanup-expired, stats
-- Web: landing (/), notepad view, plans page, success page
+- Feedback: submit, list (paginated), summarize, update status
+- Subscription: plans, checkout, status, success page, plans page, stripe webhook
+- Admin: cleanup-expired, stats, dashboard
+- Web: landing (/), notepad view, plans page, reset page, google callback, success page
 
 ## Prioritized Backlog
-### P1 - Technical Improvements
-- Rate limiting, pagination, database indexes
-- Social login (Google OAuth), password reset
 ### P2 - UX Enhancements
 - Desktop apps, browser extensions
 - Collaborative notepads
 - Notepad search/filtering
+- Email notifications for password reset
+
+## Test Credentials
+- Email: test@test.com / Password: password123
