@@ -698,6 +698,16 @@ async def append_to_notepad(code: str, request: AppendTextRequest):
     )
     
     updated_notepad = await db.notepads.find_one({"code": code.lower()})
+
+    # Fire webhooks if notepad has an owner
+    owner_id = updated_notepad.get("user_id")
+    if owner_id:
+        asyncio.create_task(fire_webhooks(owner_id, "new_entry", {
+            "code": code.lower(),
+            "text": request.text,
+            "entry_count": len(updated_notepad.get("entries", []))
+        }))
+
     return build_notepad_response(updated_notepad)
 
 
