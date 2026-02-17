@@ -725,6 +725,93 @@ async def clear_notepad(code: str):
     return {"message": "Notepad cleared"}
 
 
+# ==================== Export & AI Routes ====================
+
+@api_router.get("/notepad/{code}/export")
+async def export_notepad(code: str, format: str = "txt"):
+    """Export notepad as txt, md, or json"""
+    notepad = await db.notepads.find_one({"code": code.lower()})
+    if not notepad:
+        raise HTTPException(status_code=404, detail="Notepad not found")
+
+    entries = notepad.get("entries", [])
+    notepad_code = notepad.get("code")
+
+    if format == "json":
+        export_data = {
+            "code": notepad_code,
+            "created_at": str(notepad.get("created_at")),
+            "entries": [{"text": e["text"], "timestamp": str(e["timestamp"])} for e in entries]
+        }
+        content = json.dumps(export_data, indent=2)
+        media_type = "application/json"
+        filename = f"{notepad_code}.json"
+    elif format == "md":
+        lines = [f"# PasteBridge: {notepad_code}\n"]
+        for e in entries:
+            ts = e.get("timestamp", "")
+            if isinstance(ts, datetime):
+                ts = ts.strftime("%Y-%m-%d %H:%M:%S")
+            lines.append(f"### {ts}\n{e['text']}\n")
+        content = "\n".join(lines)
+        media_type = "text/markdown"
+        filename = f"{notepad_code}.md"
+    else:
+        lines = [f"PasteBridge: {notepad_code}\n{'='*40}\n"]
+        for e in entries:
+            ts = e.get("timestamp", "")
+            if isinstance(ts, datetime):
+                ts = ts.strftime("%Y-%m-%d %H:%M:%S")
+            lines.append(f"[{ts}]\n{e['text']}\n{'-'*40}\n")
+        content = "\n".join(lines)
+        media_type = "text/plain"
+        filename = f"{notepad_code}.txt"
+
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8")),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@api_router.post("/notepad/{code}/summarize")
+async def summarize_notepad(code: str, request: SummarizeRequest = None):
+    """AI-summarize notepad content using GPT-5.2"""
+    notepad = await db.notepads.find_one({"code": code.lower()})
+    if not notepad:
+        raise HTTPException(status_code=404, detail="Notepad not found")
+
+    entries = notepad.get("entries", [])
+    if not entries:
+        raise HTTPException(status_code=400, detail="Notepad has no entries to summarize")
+
+    all_text = "\n\n".join([e["text"] for e in entries])
+    max_len = request.max_length if request else 500
+
+    try:
+        llm_key = os.environ.get("EMERGENT_LLM_KEY")
+        if not llm_key:
+            raise HTTPException(status_code=500, detail="AI service not configured")
+
+        chat = LlmChat(
+            api_key=llm_key,
+            session_id=f"summarize-{code}-{uuid.uuid4().hex[:8]}",
+            system_message=f"Summarize the following notepad content concisely in {max_len} characters or less. Focus on key topics and actionable items. Return only the summary, no preamble."
+        ).with_model("openai", "gpt-5.2")
+
+        summary = await chat.send_message(UserMessage(text=all_text))
+        return {
+            "code": code.lower(),
+            "summary": summary,
+            "entry_count": len(entries),
+            "model": "gpt-5.2"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI summarization failed: {str(e)}")
+
+
 # ==================== Admin Routes ====================
 
 @api_router.post("/admin/cleanup-expired")
