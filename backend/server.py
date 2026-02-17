@@ -55,6 +55,41 @@ PREMIUM_EXPIRATION_DAYS = None  # Never expires
 EXPIRATION_WARNING_DAYS = 7
 
 
+# ==================== Rate Limiting ====================
+
+class RateLimiter:
+    """Simple in-memory rate limiter"""
+    def __init__(self):
+        self.requests = defaultdict(list)
+
+    def is_rate_limited(self, key: str, max_requests: int, window_seconds: int) -> bool:
+        now = time.time()
+        self.requests[key] = [t for t in self.requests[key] if now - t < window_seconds]
+        if len(self.requests[key]) >= max_requests:
+            return True
+        self.requests[key].append(now)
+        return False
+
+rate_limiter = RateLimiter()
+
+def get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    return forwarded.split(",")[0].strip() if forwarded else request.client.host
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
+
+
+class GoogleSessionRequest(BaseModel):
+    session_id: str
+
+
 # Word lists for memorable codes
 ADJECTIVES = [
     'red', 'blue', 'green', 'gold', 'silver', 'bright', 'dark', 'swift',
