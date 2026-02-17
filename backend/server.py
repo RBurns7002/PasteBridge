@@ -273,6 +273,25 @@ class SummarizeRequest(BaseModel):
     max_length: Optional[int] = 500
 
 
+class FeedbackRequest(BaseModel):
+    category: str  # "bug", "feature_request", "missing_feature", "other"
+    title: str
+    description: str
+    severity: Optional[str] = "medium"  # "low", "medium", "high", "critical"
+
+
+class SubscriptionCheckoutRequest(BaseModel):
+    plan: str  # "pro", "business"
+    origin_url: str
+
+
+# Subscription plans defined server-side (never accept amounts from frontend)
+SUBSCRIPTION_PLANS = {
+    "pro": {"name": "Pro", "amount": 4.99, "currency": "usd", "expiration_days": 365, "max_notepads": None},
+    "business": {"name": "Business", "amount": 14.99, "currency": "usd", "expiration_days": None, "max_notepads": None},
+}
+
+
 # ==================== Push Notification Helper ====================
 
 async def send_push_notification(push_token: str, title: str, body: str, data: dict = None):
