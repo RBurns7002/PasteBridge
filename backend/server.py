@@ -1538,6 +1538,28 @@ async def view_notepad(code: str):
         .empty p {{ font-size: 1.2rem; margin-bottom: 8px; }}
         .back-link {{ display: inline-block; margin-top: 24px; color: #60a5fa; text-decoration: none; font-size: 0.9rem; }}
         .back-link:hover {{ text-decoration: underline; }}
+        .summarize-section {{ margin: 20px 0; }}
+        .summarize-btn {{
+            background: linear-gradient(135deg, #8b5cf6, #6366f1);
+            border: none; color: white; padding: 10px 20px; border-radius: 10px;
+            font-size: 0.9rem; font-weight: 600; cursor: pointer; display: inline-flex;
+            align-items: center; gap: 8px; transition: opacity 0.2s;
+        }}
+        .summarize-btn:hover {{ opacity: 0.85; }}
+        .summarize-btn:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+        .summary-box {{
+            background: rgba(139,92,246,0.1); border: 1px solid rgba(139,92,246,0.25);
+            border-radius: 12px; padding: 20px; margin-top: 12px; display: none;
+            line-height: 1.6; color: #d4d4d8; font-size: 0.95rem; white-space: pre-wrap;
+        }}
+        .summary-box.show {{ display: block; }}
+        .export-btns {{ display: flex; gap: 8px; margin: 16px 0; flex-wrap: wrap; }}
+        .export-btn {{
+            background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+            color: #a1a1aa; padding: 6px 14px; border-radius: 8px; font-size: 0.8rem;
+            cursor: pointer; text-decoration: none; transition: all 0.2s;
+        }}
+        .export-btn:hover {{ background: rgba(255,255,255,0.15); color: #e4e4e7; }}
     </style>
 </head>
 <body>
