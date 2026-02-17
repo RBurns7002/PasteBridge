@@ -125,22 +125,24 @@ class TestPasswordReset:
         """POST /api/auth/reset-password resets password with valid token"""
         # Create a new test user for password reset
         unique_email = f"TEST_reset_{TEST_RUN_ID}@test.com"
+        unique_ip_reg = f"172.{hash('reset1'+TEST_RUN_ID) % 256}.{hash('reset1a'+TEST_RUN_ID) % 256}.1"
+        unique_ip_forgot = f"172.{hash('reset1b'+TEST_RUN_ID) % 256}.{hash('reset1c'+TEST_RUN_ID) % 256}.2"
         
         # Register user
         reg_response = api_client.post(f"{BASE_URL}/api/auth/register", json={
             "email": unique_email,
             "password": "oldpassword123",
             "name": "Reset Test User"
-        }, headers={"X-Forwarded-For": f"192.168.{TEST_RUN_ID[:2]}.1"})
+        }, headers={"X-Forwarded-For": unique_ip_reg})
         
         if reg_response.status_code != 200:
             pytest.skip(f"Could not register test user: {reg_response.text}")
         
-        # Get reset token
+        # Get reset token (use unique IP for rate limiting)
         forgot_response = api_client.post(f"{BASE_URL}/api/auth/forgot-password", json={
             "email": unique_email
-        })
-        assert forgot_response.status_code == 200
+        }, headers={"X-Forwarded-For": unique_ip_forgot})
+        assert forgot_response.status_code == 200, f"Forgot password failed: {forgot_response.text}"
         reset_token = forgot_response.json()["reset_token"]
         
         # Reset password
@@ -164,21 +166,24 @@ class TestPasswordReset:
         """POST /api/auth/reset-password rejects already used token"""
         # Create user, get token, use it, try again
         unique_email = f"TEST_double_{TEST_RUN_ID}@test.com"
+        unique_ip_reg = f"172.{hash('double1'+TEST_RUN_ID) % 256}.{hash('double1a'+TEST_RUN_ID) % 256}.10"
+        unique_ip_forgot = f"172.{hash('double1b'+TEST_RUN_ID) % 256}.{hash('double1c'+TEST_RUN_ID) % 256}.11"
         
         # Register
         reg_response = api_client.post(f"{BASE_URL}/api/auth/register", json={
             "email": unique_email,
             "password": "original123",
             "name": "Double Use Test"
-        }, headers={"X-Forwarded-For": f"192.168.{TEST_RUN_ID[:2]}.2"})
+        }, headers={"X-Forwarded-For": unique_ip_reg})
         
         if reg_response.status_code != 200:
             pytest.skip(f"Could not register test user: {reg_response.text}")
         
-        # Get token
+        # Get token (use unique IP for rate limiting)
         forgot_response = api_client.post(f"{BASE_URL}/api/auth/forgot-password", json={
             "email": unique_email
-        })
+        }, headers={"X-Forwarded-For": unique_ip_forgot})
+        assert forgot_response.status_code == 200, f"Forgot password failed: {forgot_response.text}"
         reset_token = forgot_response.json()["reset_token"]
         
         # Use token first time
@@ -204,21 +209,24 @@ class TestPasswordReset:
         """POST /api/auth/reset-password rejects password < 6 chars"""
         # Create user and get token
         unique_email = f"TEST_short_{TEST_RUN_ID}@test.com"
+        unique_ip_reg = f"172.{hash('short1'+TEST_RUN_ID) % 256}.{hash('short1a'+TEST_RUN_ID) % 256}.20"
+        unique_ip_forgot = f"172.{hash('short1b'+TEST_RUN_ID) % 256}.{hash('short1c'+TEST_RUN_ID) % 256}.21"
         
         # Register
         reg_response = api_client.post(f"{BASE_URL}/api/auth/register", json={
             "email": unique_email,
             "password": "validpass123",
             "name": "Short Password Test"
-        }, headers={"X-Forwarded-For": f"192.168.{TEST_RUN_ID[:2]}.3"})
+        }, headers={"X-Forwarded-For": unique_ip_reg})
         
         if reg_response.status_code != 200:
             pytest.skip(f"Could not register test user: {reg_response.text}")
         
-        # Get token
+        # Get token (use unique IP for rate limiting)
         forgot_response = api_client.post(f"{BASE_URL}/api/auth/forgot-password", json={
             "email": unique_email
-        })
+        }, headers={"X-Forwarded-For": unique_ip_forgot})
+        assert forgot_response.status_code == 200, f"Forgot password failed: {forgot_response.text}"
         reset_token = forgot_response.json()["reset_token"]
         
         # Try short password
@@ -238,21 +246,24 @@ class TestPasswordReset:
         # Create user and reset their password
         unique_email = f"TEST_login_reset_{TEST_RUN_ID}@test.com"
         new_password = "resetpass789"
+        unique_ip_reg = f"172.{hash('loginreset1'+TEST_RUN_ID) % 256}.{hash('loginreset1a'+TEST_RUN_ID) % 256}.30"
+        unique_ip_forgot = f"172.{hash('loginreset1b'+TEST_RUN_ID) % 256}.{hash('loginreset1c'+TEST_RUN_ID) % 256}.31"
         
         # Register
         reg_response = api_client.post(f"{BASE_URL}/api/auth/register", json={
             "email": unique_email,
             "password": "original123",
             "name": "Login After Reset Test"
-        }, headers={"X-Forwarded-For": f"192.168.{TEST_RUN_ID[:2]}.4"})
+        }, headers={"X-Forwarded-For": unique_ip_reg})
         
         if reg_response.status_code != 200:
             pytest.skip(f"Could not register test user: {reg_response.text}")
         
-        # Reset password
+        # Reset password (use unique IP for rate limiting)
         forgot_response = api_client.post(f"{BASE_URL}/api/auth/forgot-password", json={
             "email": unique_email
-        })
+        }, headers={"X-Forwarded-For": unique_ip_forgot})
+        assert forgot_response.status_code == 200, f"Forgot password failed: {forgot_response.text}"
         reset_token = forgot_response.json()["reset_token"]
         
         reset_response = api_client.post(f"{BASE_URL}/api/auth/reset-password", json={
