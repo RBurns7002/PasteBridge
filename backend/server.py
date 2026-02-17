@@ -685,6 +685,212 @@ async def fire_webhooks(user_id: str, event: str, payload: dict):
             pass
 
 
+# ==================== Google OAuth Routes ====================
+
+@api_router.get("/auth/google-callback", response_class=HTMLResponse)
+async def google_callback():
+    """Callback page for Google OAuth — reads session_id from fragment and exchanges for JWT"""
+    # REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+    html = '''<!DOCTYPE html><html><head><title>PasteBridge - Signing in...</title>
+    <style>
+    body { font-family: -apple-system, sans-serif; background: #0f0f1a; color: #e4e4e7; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { text-align: center; max-width: 400px; }
+    h2 { color: #60a5fa; }
+    .spinner { border: 3px solid rgba(255,255,255,0.1); border-top-color: #60a5fa; border-radius: 50%; width: 40px; height: 40px; animation: spin 0.8s linear infinite; margin: 20px auto; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .status { color: #a1a1aa; margin-top: 16px; }
+    .error { color: #ef4444; display: none; margin-top: 16px; }
+    .success { color: #22c55e; display: none; margin-top: 16px; }
+    </style></head><body>
+    <div class="card">
+    <h2>PasteBridge</h2>
+    <div class="spinner" id="spinner"></div>
+    <p class="status" id="status">Completing sign-in...</p>
+    <p class="error" id="error"></p>
+    <p class="success" id="success"></p>
+    </div>
+    <script>
+    (async function() {
+        var hash = window.location.hash;
+        var match = hash.match(/session_id=([^&]+)/);
+        if (!match) {
+            document.getElementById('spinner').style.display = 'none';
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error').textContent = 'No session found. Please try again.';
+            document.getElementById('status').style.display = 'none';
+            return;
+        }
+        var sessionId = match[1];
+        try {
+            var r = await fetch('/api/auth/google-session', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({session_id: sessionId})
+            });
+            var d = await r.json();
+            if (r.ok) {
+                document.getElementById('spinner').style.display = 'none';
+                document.getElementById('status').style.display = 'none';
+                document.getElementById('success').style.display = 'block';
+                document.getElementById('success').innerHTML = 'Signed in as <strong>' + d.user.email + '</strong><br>You can close this window and return to the app.<br><br>Token: <code style="font-size:10px;word-break:break-all;">' + d.token + '</code>';
+            } else {
+                throw new Error(d.detail || 'Sign-in failed');
+            }
+        } catch(e) {
+            document.getElementById('spinner').style.display = 'none';
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error').textContent = e.message;
+            document.getElementById('status').style.display = 'none';
+        }
+    })();
+    </script></body></html>'''
+    return HTMLResponse(content=html)
+
+
+@api_router.post("/auth/google-session")
+async def exchange_google_session(data: GoogleSessionRequest, request: Request):
+    """Exchange Emergent Auth session_id for a PasteBridge JWT token"""
+    ip = get_client_ip(request)
+    if rate_limiter.is_rate_limited(f"google:{ip}", max_requests=10, window_seconds=300):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client_http:
+            resp = await client_http.get(
+                "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+                headers={"X-Session-ID": data.session_id}
+            )
+            if resp.status_code != 200:
+                raise HTTPException(status_code=401, detail="Invalid Google session")
+            google_data = resp.json()
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="Could not verify Google session")
+
+    email = google_data["email"].lower()
+    name = google_data.get("name", email.split("@")[0])
+    picture = google_data.get("picture", "")
+
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        await db.users.update_one({"email": email}, {"$set": {
+            "name": name, "picture": picture, "google_linked": True, "updated_at": datetime.utcnow()
+        }})
+        user_id = existing["id"]
+        account_type = existing.get("account_type", "user")
+        created_at = existing["created_at"]
+    else:
+        user_id = str(uuid.uuid4())
+        account_type = "user"
+        created_at = datetime.utcnow()
+        await db.users.insert_one({
+            "id": user_id, "email": email, "name": name, "picture": picture,
+            "password_hash": "", "account_type": account_type, "google_linked": True,
+            "created_at": created_at, "updated_at": datetime.utcnow()
+        })
+
+    token = create_access_token({"sub": user_id})
+    return {
+        "user": {"id": user_id, "email": email, "name": name, "account_type": account_type, "created_at": str(created_at)},
+        "token": token,
+        "message": "Google sign-in successful"
+    }
+
+
+# ==================== Password Reset Routes ====================
+
+@api_router.post("/auth/forgot-password")
+async def forgot_password(data: PasswordResetRequest, request: Request):
+    """Request a password reset token"""
+    ip = get_client_ip(request)
+    if rate_limiter.is_rate_limited(f"reset:{ip}", max_requests=3, window_seconds=600):
+        raise HTTPException(status_code=429, detail="Too many reset requests. Try again in 10 minutes.")
+
+    user = await db.users.find_one({"email": data.email.lower()})
+    if not user:
+        return {"message": "If the email exists, a reset link has been generated."}
+
+    if user.get("google_linked") and not user.get("password_hash"):
+        return {"message": "This account uses Google sign-in. Please log in with Google."}
+
+    reset_token = secrets.token_urlsafe(32)
+    await db.password_resets.insert_one({
+        "token": reset_token,
+        "user_id": user["id"],
+        "email": user["email"],
+        "expires_at": datetime.utcnow() + timedelta(hours=1),
+        "used": False,
+        "created_at": datetime.utcnow()
+    })
+
+    return {"message": "If the email exists, a reset link has been generated.", "reset_token": reset_token}
+
+
+@api_router.get("/auth/reset-password", response_class=HTMLResponse)
+async def reset_password_page(token: str = ""):
+    """Password reset web page"""
+    html = f'''<!DOCTYPE html><html><head><title>PasteBridge - Reset Password</title>
+    <style>
+    body {{ font-family: -apple-system, sans-serif; background: #0f0f1a; color: #e4e4e7; display: flex; align-items: center; justify-content: center; min-height: 100vh; }}
+    .card {{ background: rgba(255,255,255,0.05); border-radius: 20px; padding: 40px; max-width: 400px; width: 100%; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }}
+    h2 {{ color: #60a5fa; text-align: center; margin-bottom: 24px; }}
+    input {{ width: 100%; padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.05); color: #e4e4e7; font-size: 1rem; margin-bottom: 12px; box-sizing: border-box; }}
+    button {{ width: 100%; padding: 14px; border-radius: 12px; border: none; background: #3b82f6; color: white; font-weight: 600; font-size: 1rem; cursor: pointer; }}
+    button:hover {{ background: #2563eb; }}
+    .msg {{ text-align: center; margin-top: 16px; }}
+    .err {{ color: #ef4444; }} .ok {{ color: #22c55e; }}
+    a {{ color: #60a5fa; text-decoration: none; }}
+    </style></head><body>
+    <div class="card">
+    <h2>Reset Password</h2>
+    <input type="password" id="pw1" placeholder="New password (min 6 chars)" />
+    <input type="password" id="pw2" placeholder="Confirm new password" />
+    <button onclick="resetPw()">Reset Password</button>
+    <div class="msg" id="msg"></div>
+    <p style="text-align:center;margin-top:20px;"><a href="/api/">← Back to PasteBridge</a></p>
+    </div>
+    <script>
+    async function resetPw() {{
+        var pw1 = document.getElementById('pw1').value;
+        var pw2 = document.getElementById('pw2').value;
+        var msg = document.getElementById('msg');
+        if (pw1.length < 6) {{ msg.className = 'msg err'; msg.textContent = 'Password must be at least 6 characters'; return; }}
+        if (pw1 !== pw2) {{ msg.className = 'msg err'; msg.textContent = 'Passwords do not match'; return; }}
+        try {{
+            var r = await fetch('/api/auth/reset-password', {{
+                method: 'POST', headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{token: '{token}', new_password: pw1}})
+            }});
+            var d = await r.json();
+            if (r.ok) {{ msg.className = 'msg ok'; msg.textContent = 'Password reset! You can now login with your new password.'; }}
+            else {{ msg.className = 'msg err'; msg.textContent = d.detail || 'Reset failed'; }}
+        }} catch(e) {{ msg.className = 'msg err'; msg.textContent = 'Connection error'; }}
+    }}
+    </script></body></html>'''
+    return HTMLResponse(content=html)
+
+
+@api_router.post("/auth/reset-password")
+async def reset_password_confirm(data: PasswordResetConfirm):
+    """Confirm password reset with token"""
+    reset = await db.password_resets.find_one({"token": data.token, "used": False})
+    if not reset:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    if datetime.utcnow() > reset["expires_at"]:
+        raise HTTPException(status_code=400, detail="Reset token has expired")
+
+    if len(data.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    await db.users.update_one(
+        {"id": reset["user_id"]},
+        {"$set": {"password_hash": get_password_hash(data.new_password), "updated_at": datetime.utcnow()}}
+    )
+    await db.password_resets.update_one({"token": data.token}, {"$set": {"used": True}})
+
+    return {"message": "Password reset successfully. You can now login with your new password."}
+
+
 # ==================== Notepad Routes ====================
 
 @api_router.post("/notepad", response_model=NotepadResponse)
