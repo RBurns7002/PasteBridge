@@ -409,9 +409,12 @@ def build_notepad_response(notepad: dict) -> NotepadResponse:
 # ==================== Auth Routes ====================
 
 @api_router.post("/auth/register", response_model=AuthResponse)
-async def register(data: UserRegister):
+async def register(data: UserRegister, request: Request):
     """Register a new user account"""
-    # Check if email already exists
+    ip = get_client_ip(request)
+    if rate_limiter.is_rate_limited(f"register:{ip}", max_requests=5, window_seconds=300):
+        raise HTTPException(status_code=429, detail="Too many registration attempts. Try again in 5 minutes.")
+
     existing = await db.users.find_one({"email": data.email.lower()})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
