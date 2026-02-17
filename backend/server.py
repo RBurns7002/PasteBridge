@@ -1220,12 +1220,13 @@ async def search_notepads(data: NotepadSearchRequest, user: dict = Depends(requi
     results = []
     for n in notepads:
         resp = build_notepad_response(n)
+        resp_dict = resp.dict()  # Convert Pydantic model to dict for item assignment
         if data.query:
             matching = [e for e in n.get("entries", []) if data.query.lower() in e.get("text", "").lower()]
-            resp["matching_entries"] = len(matching)
+            resp_dict["matching_entries"] = len(matching)
             if matching:
-                resp["preview"] = matching[0]["text"][:200]
-        results.append(resp)
+                resp_dict["preview"] = matching[0]["text"][:200]
+        results.append(resp_dict)
 
     return {"items": results, "total": total, "page": data.page, "pages": (total + data.limit - 1) // data.limit}
 
