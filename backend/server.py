@@ -1470,6 +1470,167 @@ async def get_stats():
     }
 
 
+# ==================== Admin Dashboard ====================
+
+@api_router.get("/admin/dashboard", response_class=HTMLResponse)
+async def admin_dashboard():
+    """Full admin dashboard for feedback management"""
+    html = '''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PasteBridge Admin Dashboard</title>
+    <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0a0a14; color: #e4e4e7; }
+    .topbar { background: rgba(255,255,255,0.03); border-bottom: 1px solid rgba(255,255,255,0.06); padding: 16px 32px; display: flex; justify-content: space-between; align-items: center; }
+    .topbar h1 { font-size: 1.2rem; color: #60a5fa; }
+    .topbar .stats { display: flex; gap: 20px; font-size: 0.85rem; color: #71717a; }
+    .topbar .stats span { color: #a1a1aa; font-weight: 600; }
+    .main { display: grid; grid-template-columns: 260px 1fr; min-height: calc(100vh - 60px); }
+    .sidebar { background: rgba(255,255,255,0.02); border-right: 1px solid rgba(255,255,255,0.06); padding: 24px 16px; }
+    .sidebar h3 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; color: #52525b; margin-bottom: 12px; }
+    .filter-btn { display: block; width: 100%; text-align: left; padding: 10px 14px; border: none; background: none; color: #a1a1aa; border-radius: 8px; cursor: pointer; font-size: 0.9rem; margin-bottom: 4px; }
+    .filter-btn:hover { background: rgba(255,255,255,0.05); }
+    .filter-btn.active { background: rgba(96,165,250,0.12); color: #60a5fa; font-weight: 600; }
+    .filter-count { float: right; background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; }
+    .content { padding: 24px 32px; overflow-y: auto; }
+    .summary-panel { background: rgba(139,92,246,0.08); border: 1px solid rgba(139,92,246,0.2); border-radius: 14px; padding: 24px; margin-bottom: 24px; }
+    .summary-panel h3 { color: #a78bfa; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    .summary-btn { background: linear-gradient(135deg, #8b5cf6, #6366f1); border: none; color: white; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.85rem; }
+    .summary-btn:hover { opacity: 0.85; }
+    .summary-btn:disabled { opacity: 0.5; }
+    .summary-text { color: #d4d4d8; line-height: 1.7; white-space: pre-wrap; font-size: 0.9rem; margin-top: 12px; display: none; }
+    .feedback-list { display: flex; flex-direction: column; gap: 12px; }
+    .feedback-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 20px; transition: border-color 0.2s; }
+    .feedback-card:hover { border-color: rgba(255,255,255,0.12); }
+    .fc-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+    .fc-title { font-size: 1rem; font-weight: 600; color: #e4e4e7; }
+    .fc-meta { font-size: 0.78rem; color: #52525b; margin-top: 4px; }
+    .fc-desc { color: #a1a1aa; font-size: 0.9rem; line-height: 1.5; margin: 12px 0; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+    .badge-bug { background: rgba(239,68,68,0.15); color: #f87171; }
+    .badge-feature { background: rgba(96,165,250,0.15); color: #60a5fa; }
+    .badge-missing { background: rgba(251,191,36,0.15); color: #fbbf24; }
+    .badge-other { background: rgba(161,161,170,0.15); color: #a1a1aa; }
+    .badge-sev-critical { background: rgba(239,68,68,0.2); color: #ef4444; }
+    .badge-sev-high { background: rgba(249,115,22,0.15); color: #fb923c; }
+    .badge-sev-medium { background: rgba(251,191,36,0.12); color: #fbbf24; }
+    .badge-sev-low { background: rgba(34,197,94,0.12); color: #22c55e; }
+    .status-select { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); color: #e4e4e7; padding: 6px 10px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; }
+    .badges { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .empty { text-align: center; color: #52525b; padding: 60px; font-size: 1rem; }
+    </style></head><body>
+    <div class="topbar">
+        <h1>PasteBridge Admin</h1>
+        <div class="stats" id="stats">Loading...</div>
+    </div>
+    <div class="main">
+        <div class="sidebar">
+            <h3>Status</h3>
+            <button class="filter-btn active" data-filter="status" data-value="" onclick="setFilter(this)">All <span class="filter-count" id="count-all">-</span></button>
+            <button class="filter-btn" data-filter="status" data-value="open" onclick="setFilter(this)">Open <span class="filter-count" id="count-open">-</span></button>
+            <button class="filter-btn" data-filter="status" data-value="in_progress" onclick="setFilter(this)">In Progress <span class="filter-count" id="count-in_progress">-</span></button>
+            <button class="filter-btn" data-filter="status" data-value="resolved" onclick="setFilter(this)">Resolved <span class="filter-count" id="count-resolved">-</span></button>
+            <button class="filter-btn" data-filter="status" data-value="wont_fix" onclick="setFilter(this)">Won't Fix <span class="filter-count" id="count-wont_fix">-</span></button>
+            <h3 style="margin-top:24px">Category</h3>
+            <button class="filter-btn active" data-filter="category" data-value="" onclick="setCatFilter(this)">All</button>
+            <button class="filter-btn" data-filter="category" data-value="bug" onclick="setCatFilter(this)">Bugs</button>
+            <button class="filter-btn" data-filter="category" data-value="feature_request" onclick="setCatFilter(this)">Feature Requests</button>
+            <button class="filter-btn" data-filter="category" data-value="missing_feature" onclick="setCatFilter(this)">Missing Features</button>
+            <button class="filter-btn" data-filter="category" data-value="other" onclick="setCatFilter(this)">Other</button>
+        </div>
+        <div class="content">
+            <div class="summary-panel">
+                <h3>AI Feedback Summary</h3>
+                <button class="summary-btn" id="summaryBtn" onclick="loadSummary()">Generate AI Summary</button>
+                <div class="summary-text" id="summaryText"></div>
+            </div>
+            <div class="feedback-list" id="feedbackList"><div class="empty">Loading feedback...</div></div>
+        </div>
+    </div>
+    <script>
+    var currentStatus = '';
+    var currentCategory = '';
+
+    function setFilter(el) {
+        document.querySelectorAll('[data-filter="status"]').forEach(function(b) { b.classList.remove('active'); });
+        el.classList.add('active');
+        currentStatus = el.dataset.value;
+        loadFeedback();
+    }
+    function setCatFilter(el) {
+        document.querySelectorAll('[data-filter="category"]').forEach(function(b) { b.classList.remove('active'); });
+        el.classList.add('active');
+        currentCategory = el.dataset.value;
+        loadFeedback();
+    }
+
+    async function loadStats() {
+        var r = await fetch('/api/admin/stats');
+        var d = await r.json();
+        document.getElementById('stats').innerHTML = 'Users: <span>' + d.total_users + '</span> | Notepads: <span>' + d.total_notepads + '</span> | Expiring: <span>' + d.expiring_soon + '</span>';
+    }
+
+    async function loadCounts() {
+        var all = await fetch('/api/admin/feedback?limit=1'); var allD = await all.json();
+        document.getElementById('count-all').textContent = allD.total;
+        var statuses = ['open', 'in_progress', 'resolved', 'wont_fix'];
+        for (var s of statuses) {
+            var r = await fetch('/api/admin/feedback?status=' + s + '&limit=1');
+            var d = await r.json();
+            var el = document.getElementById('count-' + s);
+            if (el) el.textContent = d.total;
+        }
+    }
+
+    async function loadFeedback() {
+        var url = '/api/admin/feedback?limit=50';
+        if (currentStatus) url += '&status=' + currentStatus;
+        if (currentCategory) url += '&category=' + currentCategory;
+        var r = await fetch(url);
+        var d = await r.json();
+        var list = document.getElementById('feedbackList');
+        if (!d.items || d.items.length === 0) {
+            list.innerHTML = '<div class="empty">No feedback found</div>';
+            return;
+        }
+        list.innerHTML = d.items.map(function(f) {
+            var catClass = f.category === 'bug' ? 'badge-bug' : f.category === 'feature_request' ? 'badge-feature' : f.category === 'missing_feature' ? 'badge-missing' : 'badge-other';
+            var sevClass = 'badge-sev-' + f.severity;
+            var date = new Date(f.created_at).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
+            return '<div class="feedback-card" id="card-' + f.id + '">' +
+                '<div class="fc-top"><div><div class="fc-title">' + f.title + '</div><div class="fc-meta">' + (f.user_email || 'Guest') + ' &middot; ' + date + '</div></div>' +
+                '<select class="status-select" onchange="updateStatus(\\\'' + f.id + '\\\', this.value)">' +
+                '<option value="open"' + (f.status==='open'?' selected':'') + '>Open</option>' +
+                '<option value="in_progress"' + (f.status==='in_progress'?' selected':'') + '>In Progress</option>' +
+                '<option value="resolved"' + (f.status==='resolved'?' selected':'') + '>Resolved</option>' +
+                '<option value="wont_fix"' + (f.status==='wont_fix'?' selected':'') + '>Won\\\'t Fix</option></select></div>' +
+                '<div class="badges"><span class="badge ' + catClass + '">' + f.category.replace('_',' ') + '</span><span class="badge ' + sevClass + '">' + f.severity + '</span></div>' +
+                '<div class="fc-desc">' + f.description + '</div></div>';
+        }).join('');
+    }
+
+    async function updateStatus(id, status) {
+        await fetch('/api/admin/feedback/' + id + '?status=' + status, {method: 'PATCH'});
+        loadCounts();
+    }
+
+    async function loadSummary() {
+        var btn = document.getElementById('summaryBtn');
+        var text = document.getElementById('summaryText');
+        btn.disabled = true; btn.textContent = 'Generating...';
+        text.style.display = 'block'; text.textContent = 'Analyzing feedback with AI...';
+        try {
+            var r = await fetch('/api/admin/feedback/summarize', {method: 'POST'});
+            var d = await r.json();
+            text.textContent = d.summary || 'No summary available';
+        } catch(e) { text.textContent = 'Error: ' + e.message; }
+        btn.disabled = false; btn.textContent = 'Regenerate Summary';
+    }
+
+    loadStats(); loadCounts(); loadFeedback();
+    </script></body></html>'''
+    return HTMLResponse(content=html)
+
+
 # ==================== Web Pages ====================
 
 @api_router.get("/", response_class=HTMLResponse)
