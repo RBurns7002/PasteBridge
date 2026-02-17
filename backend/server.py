@@ -1779,6 +1779,145 @@ async def admin_dashboard():
     return HTMLResponse(content=html)
 
 
+# ==================== Analytics ====================
+
+@api_router.get("/admin/analytics-data")
+async def analytics_data():
+    """Return analytics data for the dashboard"""
+    now = datetime.utcnow()
+
+    # Entries per day (last 30 days)
+    entries_pipeline = [
+        {"$unwind": "$entries"},
+        {"$match": {"entries.timestamp": {"$gte": now - timedelta(days=30)}}},
+        {"$group": {
+            "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$entries.timestamp"}},
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    entries_by_day = await db.notepads.aggregate(entries_pipeline).to_list(31)
+
+    # New users per day (last 30 days)
+    users_pipeline = [
+        {"$match": {"created_at": {"$gte": now - timedelta(days=30)}}},
+        {"$group": {
+            "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}},
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    users_by_day = await db.users.aggregate(users_pipeline).to_list(31)
+
+    # Top notepads by entry count
+    top_pipeline = [
+        {"$project": {"_id": 0, "code": 1, "user_id": 1, "entry_count": {"$size": {"$ifNull": ["$entries", []]}}}},
+        {"$sort": {"entry_count": -1}},
+        {"$limit": 10}
+    ]
+    top_notepads = await db.notepads.aggregate(top_pipeline).to_list(10)
+
+    # Overall stats
+    total_users = await db.users.count_documents({})
+    total_notepads = await db.notepads.count_documents({})
+    total_entries = 0
+    entry_count_pipeline = [{"$project": {"c": {"$size": {"$ifNull": ["$entries", []]}}}}, {"$group": {"_id": None, "total": {"$sum": "$c"}}}]
+    result = await db.notepads.aggregate(entry_count_pipeline).to_list(1)
+    if result:
+        total_entries = result[0]["total"]
+
+    active_today = await db.notepads.count_documents({"entries.timestamp": {"$gte": now - timedelta(days=1)}})
+
+    return {
+        "entries_by_day": [{"date": e["_id"], "count": e["count"]} for e in entries_by_day],
+        "users_by_day": [{"date": u["_id"], "count": u["count"]} for u in users_by_day],
+        "top_notepads": top_notepads,
+        "totals": {"users": total_users, "notepads": total_notepads, "entries": total_entries, "active_today": active_today}
+    }
+
+
+@api_router.get("/admin/analytics", response_class=HTMLResponse)
+async def analytics_page():
+    """Analytics dashboard with charts"""
+    html = '''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PasteBridge Analytics</title>
+    <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, sans-serif; background: #0a0a14; color: #e4e4e7; padding: 32px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+    .header h1 { font-size: 1.4rem; color: #60a5fa; }
+    .header a { color: #71717a; text-decoration: none; font-size: 0.85rem; }
+    .header a:hover { color: #a1a1aa; }
+    .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
+    .stat-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 14px; padding: 24px; text-align: center; }
+    .stat-value { font-size: 2rem; font-weight: 700; color: #60a5fa; }
+    .stat-label { color: #71717a; font-size: 0.8rem; margin-top: 4px; text-transform: uppercase; letter-spacing: 1px; }
+    .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 32px; }
+    .chart-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 14px; padding: 24px; }
+    .chart-card h3 { color: #a1a1aa; font-size: 0.85rem; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .chart-area { height: 200px; display: flex; align-items: flex-end; gap: 2px; }
+    .bar { background: linear-gradient(to top, #3b82f6, #60a5fa); border-radius: 3px 3px 0 0; flex: 1; min-width: 6px; position: relative; transition: opacity 0.2s; cursor: default; }
+    .bar:hover { opacity: 0.8; }
+    .bar-label { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-size: 0.65rem; color: #a1a1aa; white-space: nowrap; display: none; }
+    .bar:hover .bar-label { display: block; }
+    .bar.green { background: linear-gradient(to top, #22c55e, #4ade80); }
+    .table-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 14px; padding: 24px; }
+    .table-card h3 { color: #a1a1aa; font-size: 0.85rem; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.5px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; color: #52525b; font-size: 0.75rem; padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06); text-transform: uppercase; }
+    td { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.03); font-size: 0.9rem; }
+    .code-link { color: #60a5fa; text-decoration: none; font-family: monospace; }
+    .code-link:hover { text-decoration: underline; }
+    @media (max-width: 768px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } .chart-grid { grid-template-columns: 1fr; } }
+    </style></head><body>
+    <div class="header">
+        <h1>PasteBridge Analytics</h1>
+        <div><a href="/api/admin/dashboard">Feedback Dashboard</a> &middot; <a href="/api/">Home</a></div>
+    </div>
+    <div class="stat-grid" id="stats">
+        <div class="stat-card"><div class="stat-value" id="s-users">-</div><div class="stat-label">Total Users</div></div>
+        <div class="stat-card"><div class="stat-value" id="s-notepads">-</div><div class="stat-label">Total Notepads</div></div>
+        <div class="stat-card"><div class="stat-value" id="s-entries">-</div><div class="stat-label">Total Entries</div></div>
+        <div class="stat-card"><div class="stat-value" id="s-active">-</div><div class="stat-label">Active Today</div></div>
+    </div>
+    <div class="chart-grid">
+        <div class="chart-card"><h3>Entries Per Day (30d)</h3><div class="chart-area" id="entriesChart"></div></div>
+        <div class="chart-card"><h3>New Users Per Day (30d)</h3><div class="chart-area" id="usersChart"></div></div>
+    </div>
+    <div class="table-card"><h3>Top Notepads by Entry Count</h3><table><thead><tr><th>Code</th><th>Entries</th><th>Owner</th></tr></thead><tbody id="topTable"></tbody></table></div>
+    <script>
+    function makeChart(containerId, data, colorClass) {
+        var el = document.getElementById(containerId);
+        if (!data.length) { el.innerHTML = '<span style="color:#52525b">No data</span>'; return; }
+        var max = Math.max(...data.map(function(d) { return d.count; }));
+        if (max === 0) max = 1;
+        el.innerHTML = data.map(function(d) {
+            var h = Math.max(4, (d.count / max) * 180);
+            return '<div class="bar ' + (colorClass||'') + '" style="height:' + h + 'px"><span class="bar-label">' + d.date.slice(5) + ': ' + d.count + '</span></div>';
+        }).join('');
+    }
+
+    async function load() {
+        try {
+            var r = await fetch('/api/admin/analytics-data');
+            var d = await r.json();
+            document.getElementById('s-users').textContent = d.totals.users;
+            document.getElementById('s-notepads').textContent = d.totals.notepads;
+            document.getElementById('s-entries').textContent = d.totals.entries;
+            document.getElementById('s-active').textContent = d.totals.active_today;
+            makeChart('entriesChart', d.entries_by_day, '');
+            makeChart('usersChart', d.users_by_day, 'green');
+            var tbody = document.getElementById('topTable');
+            tbody.innerHTML = d.top_notepads.map(function(n) {
+                return '<tr><td><a class="code-link" href="/api/notepad/' + n.code + '/view">' + n.code + '</a></td><td>' + n.entry_count + '</td><td>' + (n.user_id ? n.user_id.slice(0,8)+'...' : 'Guest') + '</td></tr>';
+            }).join('');
+        } catch(e) { console.error(e); }
+    }
+    load();
+    </script></body></html>'''
+    return HTMLResponse(content=html)
+
+
 # ==================== Web Pages ====================
 
 @api_router.get("/", response_class=HTMLResponse)
