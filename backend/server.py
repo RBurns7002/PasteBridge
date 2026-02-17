@@ -90,6 +90,19 @@ class GoogleSessionRequest(BaseModel):
     session_id: str
 
 
+class ShareNotepadRequest(BaseModel):
+    email: str
+
+
+class NotepadSearchRequest(BaseModel):
+    query: Optional[str] = ""
+    code: Optional[str] = ""
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    page: int = 1
+    limit: int = 20
+
+
 # Word lists for memorable codes
 ADJECTIVES = [
     'red', 'blue', 'green', 'gold', 'silver', 'bright', 'dark', 'swift',
