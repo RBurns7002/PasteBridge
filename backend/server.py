@@ -536,6 +536,91 @@ async def bulk_link_notepads(data: BulkLinkRequest, user: dict = Depends(require
     }
 
 
+@api_router.post("/auth/push-token")
+async def register_push_token(data: PushTokenRequest, user: dict = Depends(require_auth)):
+    """Register a device push token for notifications"""
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$addToSet": {"push_tokens": data.token}}
+    )
+    return {"message": "Push token registered"}
+
+
+@api_router.delete("/auth/push-token")
+async def remove_push_token(data: PushTokenRequest, user: dict = Depends(require_auth)):
+    """Remove a device push token"""
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$pull": {"push_tokens": data.token}}
+    )
+    return {"message": "Push token removed"}
+
+
+# ==================== Webhook Routes ====================
+
+@api_router.post("/auth/webhooks")
+async def create_webhook(data: WebhookRequest, user: dict = Depends(require_auth)):
+    """Register a webhook for notepad events"""
+    webhook_id = str(uuid.uuid4())
+    webhook_secret = data.secret or secrets.token_hex(16)
+    webhook = {
+        "id": webhook_id,
+        "user_id": user["id"],
+        "url": data.url,
+        "events": data.events,
+        "secret": webhook_secret,
+        "active": True,
+        "created_at": datetime.utcnow()
+    }
+    await db.webhooks.insert_one(webhook)
+    return {
+        "id": webhook_id,
+        "url": data.url,
+        "events": data.events,
+        "secret": webhook_secret,
+        "active": True
+    }
+
+
+@api_router.get("/auth/webhooks")
+async def list_webhooks(user: dict = Depends(require_auth)):
+    """List user's webhooks"""
+    webhooks = await db.webhooks.find(
+        {"user_id": user["id"]},
+        {"_id": 0, "id": 1, "url": 1, "events": 1, "active": 1, "created_at": 1}
+    ).to_list(50)
+    return webhooks
+
+
+@api_router.delete("/auth/webhooks/{webhook_id}")
+async def delete_webhook(webhook_id: str, user: dict = Depends(require_auth)):
+    """Delete a webhook"""
+    result = await db.webhooks.delete_one({"id": webhook_id, "user_id": user["id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    return {"message": "Webhook deleted"}
+
+
+async def fire_webhooks(user_id: str, event: str, payload: dict):
+    """Fire webhooks for a user event"""
+    webhooks = await db.webhooks.find(
+        {"user_id": user_id, "active": True, "events": event}
+    ).to_list(20)
+    for wh in webhooks:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client_http:
+                await client_http.post(
+                    wh["url"],
+                    json={"event": event, "webhook_id": wh["id"], "data": payload},
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Webhook-Secret": wh.get("secret", "")
+                    }
+                )
+        except Exception:
+            pass
+
+
 # ==================== Notepad Routes ====================
 
 @api_router.post("/notepad", response_model=NotepadResponse)
