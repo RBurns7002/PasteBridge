@@ -147,6 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await setSecureItem(USER_KEY, JSON.stringify(data.user));
         setUser(data.user);
         setToken(data.token);
+        registerPushNotifications(data.token);
         return { success: true };
       } else {
         return { success: false, error: data.detail || 'Login failed' };
@@ -171,6 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await setSecureItem(USER_KEY, JSON.stringify(data.user));
         setUser(data.user);
         setToken(data.token);
+        registerPushNotifications(data.token);
         return { success: true };
       } else {
         return { success: false, error: data.detail || 'Registration failed' };
