@@ -449,8 +449,12 @@ async def register(data: UserRegister, request: Request):
 
 
 @api_router.post("/auth/login", response_model=AuthResponse)
-async def login(data: UserLogin):
+async def login(data: UserLogin, request: Request):
     """Login with email and password"""
+    ip = get_client_ip(request)
+    if rate_limiter.is_rate_limited(f"login:{ip}", max_requests=10, window_seconds=300):
+        raise HTTPException(status_code=429, detail="Too many login attempts. Try again in 5 minutes.")
+
     user = await db.users.find_one({"email": data.email.lower()})
     
     if not user or not verify_password(data.password, user["password_hash"]):
