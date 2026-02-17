@@ -1304,6 +1304,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+@app.on_event("startup")
+async def start_cron():
+    """Start background cleanup cron job"""
+    asyncio.create_task(cleanup_cron())
+    logging.getLogger("cron").info("Cleanup cron job started (every 6 hours)")
+
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
