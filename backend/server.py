@@ -834,6 +834,347 @@ async def summarize_notepad(code: str, request: SummarizeRequest = None):
 
 # ==================== Admin Routes ====================
 
+# --- Feedback Routes ---
+
+@api_router.post("/feedback")
+async def submit_feedback(data: FeedbackRequest, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Submit bug report or feature request (works for guests and authenticated users)"""
+    user_id = None
+    user_email = None
+    if credentials:
+        try:
+            payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+            user_id = payload.get("sub")
+            user_obj = await db.users.find_one({"id": user_id})
+            if user_obj:
+                user_email = user_obj.get("email")
+        except JWTError:
+            pass
+
+    feedback = {
+        "id": str(uuid.uuid4()),
+        "category": data.category,
+        "title": data.title,
+        "description": data.description,
+        "severity": data.severity,
+        "user_id": user_id,
+        "user_email": user_email,
+        "status": "open",
+        "created_at": datetime.utcnow()
+    }
+    await db.feedback.insert_one(feedback)
+    return {"id": feedback["id"], "message": "Feedback submitted. Thank you!"}
+
+
+@api_router.get("/admin/feedback")
+async def list_feedback(status: Optional[str] = None, category: Optional[str] = None):
+    """List all feedback entries"""
+    query = {}
+    if status:
+        query["status"] = status
+    if category:
+        query["category"] = category
+    items = await db.feedback.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return items
+
+
+@api_router.post("/admin/feedback/summarize")
+async def summarize_feedback():
+    """AI-summarize all open feedback for quick inspection"""
+    items = await db.feedback.find({"status": "open"}, {"_id": 0}).to_list(200)
+    if not items:
+        return {"summary": "No open feedback to summarize.", "count": 0}
+
+    text_block = "\n\n".join([
+        f"[{f['category'].upper()}] ({f['severity']}) {f['title']}: {f['description']}"
+        for f in items
+    ])
+
+    try:
+        llm_key = os.environ.get("EMERGENT_LLM_KEY")
+        chat = LlmChat(
+            api_key=llm_key,
+            session_id=f"feedback-summary-{uuid.uuid4().hex[:8]}",
+            system_message="You are a product manager reviewing user feedback. Categorize and summarize the feedback into: 1) Critical bugs to fix immediately, 2) Feature requests by popularity, 3) Missing features that may need README/docs updates, 4) Low priority items. Be concise and actionable."
+        ).with_model("openai", "gpt-5.2")
+
+        summary = await chat.send_message(UserMessage(text=text_block))
+        return {"summary": summary, "count": len(items), "model": "gpt-5.2"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI summarization failed: {str(e)}")
+
+
+@api_router.patch("/admin/feedback/{feedback_id}")
+async def update_feedback_status(feedback_id: str, status: str):
+    """Update feedback status (open, in_progress, resolved, wont_fix)"""
+    result = await db.feedback.update_one(
+        {"id": feedback_id},
+        {"$set": {"status": status, "updated_at": datetime.utcnow()}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    return {"message": f"Feedback status updated to {status}"}
+
+
+# --- Subscription Routes ---
+
+@api_router.get("/subscription/plans")
+async def get_subscription_plans():
+    """Get available subscription plans"""
+    return {
+        "free": {"name": "Free", "price": 0, "features": ["5 notepads", "90-day storage", "Basic clipboard sync"]},
+        "pro": {"name": "Pro", "price": 4.99, "features": ["Unlimited notepads", "1-year storage", "AI summarization", "Export (txt/md/json)"]},
+        "business": {"name": "Business", "price": 14.99, "features": ["Unlimited notepads", "Never-expire storage", "AI summarization", "Webhooks & automation", "Priority support"]},
+    }
+
+
+@api_router.post("/subscription/checkout")
+async def create_subscription_checkout(data: SubscriptionCheckoutRequest, request_obj: "Request" = None, user: dict = Depends(require_auth)):
+    """Create Stripe checkout session for subscription"""
+    from starlette.requests import Request
+    plan = SUBSCRIPTION_PLANS.get(data.plan)
+    if not plan:
+        raise HTTPException(status_code=400, detail="Invalid plan. Choose 'pro' or 'business'")
+
+    stripe_key = os.environ.get("STRIPE_API_KEY")
+    if not stripe_key:
+        raise HTTPException(status_code=500, detail="Payment service not configured")
+
+    origin = data.origin_url.rstrip("/")
+    success_url = f"{origin}/api/subscription/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/api/subscription/plans-page"
+
+    webhook_url = f"{origin}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=stripe_key, webhook_url=webhook_url)
+
+    checkout_request = CheckoutSessionRequest(
+        amount=plan["amount"],
+        currency=plan["currency"],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={
+            "user_id": user["id"],
+            "plan": data.plan,
+            "user_email": user.get("email", "")
+        }
+    )
+
+    session = await stripe_checkout.create_checkout_session(checkout_request)
+
+    # Store payment transaction
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "session_id": session.session_id,
+        "user_id": user["id"],
+        "plan": data.plan,
+        "amount": plan["amount"],
+        "currency": plan["currency"],
+        "payment_status": "pending",
+        "created_at": datetime.utcnow()
+    })
+
+    return {"url": session.url, "session_id": session.session_id}
+
+
+@api_router.get("/subscription/status/{session_id}")
+async def get_subscription_status(session_id: str):
+    """Check subscription payment status and activate if paid"""
+    stripe_key = os.environ.get("STRIPE_API_KEY")
+    stripe_checkout = StripeCheckout(api_key=stripe_key, webhook_url="")
+
+    status = await stripe_checkout.get_checkout_status(session_id)
+
+    # Update transaction
+    txn = await db.payment_transactions.find_one({"session_id": session_id})
+    if txn:
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {
+                "payment_status": status.payment_status,
+                "status": status.status,
+                "updated_at": datetime.utcnow()
+            }}
+        )
+
+        # Activate subscription if paid and not already activated
+        if status.payment_status == "paid" and not txn.get("activated"):
+            plan_name = txn.get("plan", "pro")
+            plan = SUBSCRIPTION_PLANS.get(plan_name, SUBSCRIPTION_PLANS["pro"])
+            exp_days = plan.get("expiration_days")
+
+            await db.users.update_one(
+                {"id": txn["user_id"]},
+                {"$set": {
+                    "account_type": plan_name,
+                    "subscription_plan": plan_name,
+                    "subscription_activated_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                }}
+            )
+
+            # Upgrade all user's notepads
+            update_fields = {"account_type": plan_name, "updated_at": datetime.utcnow()}
+            if exp_days:
+                update_fields["expires_at"] = datetime.utcnow() + timedelta(days=exp_days)
+            else:
+                update_fields["expires_at"] = None  # Never expires for business
+            await db.notepads.update_many(
+                {"user_id": txn["user_id"]},
+                {"$set": update_fields}
+            )
+
+            await db.payment_transactions.update_one(
+                {"session_id": session_id},
+                {"$set": {"activated": True}}
+            )
+
+    return {
+        "status": status.status,
+        "payment_status": status.payment_status,
+        "amount_total": status.amount_total,
+        "currency": status.currency
+    }
+
+
+@api_router.get("/subscription/success", response_class=HTMLResponse)
+async def subscription_success_page(session_id: str = ""):
+    """Success page after subscription payment"""
+    html = f'''<!DOCTYPE html><html><head><title>PasteBridge - Payment</title>
+    <style>
+    body {{ font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #0f0f1a, #1a1a2e); min-height: 100vh; display: flex; align-items: center; justify-content: center; color: #e4e4e7; }}
+    .card {{ background: rgba(255,255,255,0.05); border-radius: 20px; padding: 48px; max-width: 480px; text-align: center; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }}
+    h1 {{ color: #60a5fa; margin-bottom: 16px; }}
+    .status {{ padding: 12px 24px; border-radius: 8px; margin: 20px 0; font-weight: 600; }}
+    .success {{ background: rgba(34,197,94,0.15); color: #22c55e; }}
+    .pending {{ background: rgba(245,158,11,0.15); color: #fbbf24; }}
+    .error {{ background: rgba(239,68,68,0.15); color: #ef4444; }}
+    a {{ color: #60a5fa; text-decoration: none; }}
+    </style></head><body><div class="card">
+    <h1>PasteBridge</h1>
+    <div id="status" class="status pending">Checking payment status...</div>
+    <p id="message" style="color:#a1a1aa;margin-top:16px;"></p>
+    <p style="margin-top:24px;"><a href="/api/">← Back to PasteBridge</a></p>
+    </div>
+    <script>
+    async function pollStatus(sid, attempts) {{
+        if (attempts >= 8) {{ document.getElementById('status').textContent = 'Timed out. Check your account.'; return; }}
+        try {{
+            var r = await fetch('/api/subscription/status/' + sid);
+            var d = await r.json();
+            if (d.payment_status === 'paid') {{
+                document.getElementById('status').className = 'status success';
+                document.getElementById('status').textContent = 'Payment Successful!';
+                document.getElementById('message').textContent = 'Your subscription is now active. Open the PasteBridge app to enjoy your new features.';
+                return;
+            }} else if (d.status === 'expired') {{
+                document.getElementById('status').className = 'status error';
+                document.getElementById('status').textContent = 'Session expired';
+                return;
+            }}
+            setTimeout(function() {{ pollStatus(sid, attempts + 1); }}, 2000);
+        }} catch(e) {{
+            document.getElementById('status').className = 'status error';
+            document.getElementById('status').textContent = 'Error checking status';
+        }}
+    }}
+    var sid = new URLSearchParams(window.location.search).get('session_id');
+    if (sid) {{ pollStatus(sid, 0); }}
+    else {{ document.getElementById('status').textContent = 'No session found'; }}
+    </script></body></html>'''
+    return HTMLResponse(content=html)
+
+
+@api_router.get("/subscription/plans-page", response_class=HTMLResponse)
+async def plans_page():
+    """Web page showing subscription plans"""
+    html = '''<!DOCTYPE html><html><head><title>PasteBridge - Plans</title>
+    <style>
+    body { font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #0f0f1a, #1a1a2e); min-height: 100vh; color: #e4e4e7; padding: 40px 20px; }
+    .container { max-width: 900px; margin: 0 auto; text-align: center; }
+    h1 { color: #60a5fa; font-size: 2rem; margin-bottom: 8px; }
+    .subtitle { color: #a1a1aa; margin-bottom: 40px; }
+    .plans { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
+    .plan { background: rgba(255,255,255,0.05); border-radius: 16px; padding: 32px; flex: 1; min-width: 250px; max-width: 280px; border: 1px solid rgba(255,255,255,0.1); }
+    .plan.featured { border-color: #60a5fa; box-shadow: 0 0 30px rgba(96,165,250,0.15); }
+    .plan-name { font-size: 1.3rem; font-weight: 700; margin-bottom: 8px; }
+    .plan-price { font-size: 2rem; font-weight: 700; color: #60a5fa; margin-bottom: 16px; }
+    .plan-price span { font-size: 0.9rem; color: #71717a; font-weight: 400; }
+    .features { list-style: none; text-align: left; margin-bottom: 24px; }
+    .features li { padding: 6px 0; color: #a1a1aa; font-size: 0.9rem; }
+    .features li::before { content: "✓ "; color: #22c55e; font-weight: 700; }
+    a.btn { display: block; padding: 12px; background: #3b82f6; color: white; border-radius: 10px; text-decoration: none; font-weight: 600; }
+    a.btn:hover { background: #2563eb; }
+    .back { margin-top: 32px; }
+    .back a { color: #60a5fa; text-decoration: none; }
+    </style></head><body><div class="container">
+    <h1>PasteBridge Plans</h1>
+    <p class="subtitle">Upgrade for more power</p>
+    <div class="plans">
+    <div class="plan"><div class="plan-name">Free</div><div class="plan-price">$0<span>/forever</span></div>
+    <ul class="features"><li>5 notepads</li><li>90-day storage</li><li>Clipboard sync</li></ul>
+    <div style="color:#71717a;text-align:center;">Current Plan</div></div>
+    <div class="plan featured"><div class="plan-name">Pro</div><div class="plan-price">$4.99<span>/month</span></div>
+    <ul class="features"><li>Unlimited notepads</li><li>1-year storage</li><li>AI summarization</li><li>Export (txt/md/json)</li></ul>
+    <div style="text-align:center;color:#a1a1aa;font-size:0.85rem;">Upgrade from the app</div></div>
+    <div class="plan"><div class="plan-name">Business</div><div class="plan-price">$14.99<span>/month</span></div>
+    <ul class="features"><li>Unlimited notepads</li><li>Never-expire storage</li><li>AI summarization</li><li>Webhooks & automation</li><li>Priority support</li></ul>
+    <div style="text-align:center;color:#a1a1aa;font-size:0.85rem;">Upgrade from the app</div></div>
+    </div>
+    <div class="back"><a href="/api/">← Back to PasteBridge</a></div>
+    </div></body></html>'''
+    return HTMLResponse(content=html)
+
+
+@api_router.post("/webhook/stripe")
+async def stripe_webhook(request: "Request"):
+    """Handle Stripe webhook events"""
+    from starlette.requests import Request
+    body = await request.body()
+    sig = request.headers.get("Stripe-Signature", "")
+
+    stripe_key = os.environ.get("STRIPE_API_KEY")
+    stripe_checkout = StripeCheckout(api_key=stripe_key, webhook_url="")
+
+    try:
+        event = await stripe_checkout.handle_webhook(body, sig)
+        if event.payment_status == "paid":
+            txn = await db.payment_transactions.find_one({"session_id": event.session_id})
+            if txn and not txn.get("activated"):
+                plan_name = event.metadata.get("plan", "pro")
+                plan = SUBSCRIPTION_PLANS.get(plan_name, SUBSCRIPTION_PLANS["pro"])
+                exp_days = plan.get("expiration_days")
+
+                await db.users.update_one(
+                    {"id": event.metadata.get("user_id")},
+                    {"$set": {
+                        "account_type": plan_name,
+                        "subscription_plan": plan_name,
+                        "subscription_activated_at": datetime.utcnow()
+                    }}
+                )
+
+                update_fields = {"account_type": plan_name}
+                if exp_days:
+                    update_fields["expires_at"] = datetime.utcnow() + timedelta(days=exp_days)
+                else:
+                    update_fields["expires_at"] = None
+                await db.notepads.update_many(
+                    {"user_id": event.metadata.get("user_id")},
+                    {"$set": update_fields}
+                )
+
+                await db.payment_transactions.update_one(
+                    {"session_id": event.session_id},
+                    {"$set": {"activated": True, "payment_status": "paid"}}
+                )
+        return {"status": "ok"}
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Webhook error: {e}")
+        return {"status": "error"}
+
+
+# --- Admin Stats ---
+
 @api_router.post("/admin/cleanup-expired")
 async def cleanup_expired_notepads():
     """Admin endpoint to cleanup expired notepads"""
