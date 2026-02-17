@@ -85,6 +85,14 @@ export default function Index() {
   // Profile modal state
   const [profileModalVisible, setProfileModalVisible] = useState(false);
 
+  // Feedback modal state
+  const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
+  const [feedbackCategory, setFeedbackCategory] = useState<string>('bug');
+  const [feedbackTitle, setFeedbackTitle] = useState('');
+  const [feedbackDesc, setFeedbackDesc] = useState('');
+  const [feedbackSeverity, setFeedbackSeverity] = useState<string>('medium');
+  const [feedbackSending, setFeedbackSending] = useState(false);
+
   useEffect(() => {
     if (!authLoading) {
       loadOrCreateSession();
