@@ -6,9 +6,10 @@ An Android application that listens to the device's clipboard. When text is copi
 ## Architecture
 - **Backend**: FastAPI + MongoDB (server.py)
 - **Frontend**: Expo (React Native) with expo-router
-- **Database**: MongoDB (notepads, users, webhooks collections)
+- **Database**: MongoDB (notepads, users, webhooks, feedback, payment_transactions)
 - **Auth**: JWT-based (python-jose, passlib/bcrypt)
 - **AI**: GPT-5.2 via emergentintegrations library
+- **Payments**: Stripe via emergentintegrations library
 - **CI/CD**: GitHub Actions for APK builds (Gradle)
 
 ## Core Files
@@ -16,54 +17,55 @@ An Android application that listens to the device's clipboard. When text is copi
 - `/app/frontend/app/index.tsx` - Main app screen
 - `/app/frontend/app/context/AuthContext.tsx` - Auth + push notification state
 - `/app/frontend/app/_layout.tsx` - Root layout with AuthProvider
-- `/app/.github/workflows/build-apk.yml` - APK build workflow
 
 ## What's Implemented
 
 ### Phase 1: Notepad History - DONE
-- Local notepad history (AsyncStorage), switch between notepads, max 50 items
-
 ### Phase 2: Guest Account Limits - DONE
-- 90-day expiration for guest notepads, expiration banners
-
 ### Phase 3: User Authentication - DONE (Feb 15, 2026)
-- Registration/login with JWT, profile management, password change
-- Bulk "Claim All Notepads" after login
-- Server-side notepad merge in history, "Linked" badges
-- **Testing**: 47/47 backend tests passed
-
 ### Phase 4: Premium Features - DONE (Feb 17, 2026)
-- **Push Notifications**: Expo push tokens registered on login, triggered on web notepad view
-- **Cron Job**: Background cleanup of expired notepads every 6 hours
-- **Workflow Automation**: Webhook CRUD (create, list, delete), fires on notepad append
-- **Export/Import**: Download notepad as .txt, .md, or .json
-- **AI Summarization**: GPT-5.2 powered notepad content summarization
-- **Testing**: 35/35 backend tests passed
+- Push notifications, Cron job, Webhooks, Export, AI Summarization
 
-## Prioritized Backlog
+### Bug & Feedback System - DONE (Feb 17, 2026)
+- In-app feedback form (bug/feature_request/missing_feature/other)
+- Admin endpoints: list, filter, AI-summarize, status update
+- Feedback button in mobile app toolbar
+- **Testing**: 27/27 tests passed
 
-### P1 - Subscription Tiers
-- Stripe integration for Free/Pro/Business plans
-- Premium notepads that never expire
+### Stripe Subscriptions - DONE (Feb 17, 2026)
+- Free ($0): 5 notepads, 90-day storage
+- Pro ($4.99): Unlimited, 1-year, AI summarize, export
+- Business ($14.99): Unlimited, never-expire, webhooks, priority
+- Stripe checkout, status polling, webhook, success/cancel pages
+- Plans web page at /api/subscription/plans-page
 
-### P2 - Technical Improvements
-- Rate limiting
-- Pagination for large notepads
-- Database indexes
-- Social login (Google OAuth)
-- Password reset flow
+### Web View Enhancements - DONE (Feb 17, 2026)
+- Export TXT/MD/JSON buttons on notepad view
+- AI Summarize button with inline results
 
-## DB Schema
-- **notepads**: `{ id, code, owner_id, user_id, created_at, expires_at, account_type, entries: [{ text, timestamp }] }`
-- **users**: `{ id, email, password_hash, name, account_type, push_tokens: [], created_at, updated_at }`
-- **webhooks**: `{ id, user_id, url, events: [], secret, active, created_at }`
+## Total Testing: 109/109 tests passed across 4 iterations (100%)
+
+## DB Collections
+- **notepads**: id, code, owner_id, user_id, created_at, expires_at, account_type, entries
+- **users**: id, email, password_hash, name, account_type, push_tokens, subscription_plan
+- **webhooks**: id, user_id, url, events, secret, active
+- **feedback**: id, category, title, description, severity, user_id, user_email, status
+- **payment_transactions**: id, session_id, user_id, plan, amount, currency, payment_status, activated
 
 ## API Endpoints
-- Auth: register, login, /me, profile, change-password, notepads, link-notepad, link-notepads, push-token
+- Auth: register, login, /me, profile, change-password, notepads, link-notepad(s), push-token
 - Webhooks: create, list, delete
 - Notepad: create, get, lookup, append, clear, export, summarize
+- Feedback: submit, list, summarize, update status
+- Subscription: plans, checkout, status, success page, plans page, webhook
 - Admin: cleanup-expired, stats
-- Web: landing page (/), notepad view
+- Web: landing (/), notepad view, plans page, success page
 
-## Test Credentials
-- Email: test@test.com / Password: password123
+## Prioritized Backlog
+### P1 - Technical Improvements
+- Rate limiting, pagination, database indexes
+- Social login (Google OAuth), password reset
+### P2 - UX Enhancements
+- Desktop apps, browser extensions
+- Collaborative notepads
+- Notepad search/filtering
