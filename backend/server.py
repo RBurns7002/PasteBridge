@@ -986,6 +986,19 @@ async def view_notepad(code: str):
             <p><a href="/api/">← Back to home</a></p></div></body></html>''',
             status_code=404
         )
+
+    # Send push notification to notepad owner
+    owner_id = notepad.get("user_id")
+    if owner_id:
+        owner = await db.users.find_one({"id": owner_id})
+        if owner:
+            for push_token in owner.get("push_tokens", []):
+                asyncio.create_task(send_push_notification(
+                    push_token,
+                    "Notepad Viewed",
+                    f"Someone is viewing your notepad '{code}'",
+                    {"code": code, "event": "view"}
+                ))
     
     expires_at = notepad.get("expires_at")
     if expires_at and is_expired(expires_at):
