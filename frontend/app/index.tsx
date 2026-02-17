@@ -557,6 +557,46 @@ export default function Index() {
     }
   };
 
+  const submitFeedback = async () => {
+    if (!feedbackTitle.trim() || !feedbackDesc.trim()) {
+      setError('Please fill in title and description');
+      return;
+    }
+    setFeedbackSending(true);
+    try {
+      const headers: any = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const response = await fetch(`${EXPO_PUBLIC_BACKEND_URL}/api/feedback`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          category: feedbackCategory,
+          title: feedbackTitle,
+          description: feedbackDesc,
+          severity: feedbackSeverity,
+        }),
+      });
+
+      if (response.ok) {
+        setFeedbackModalVisible(false);
+        setFeedbackTitle('');
+        setFeedbackDesc('');
+        setFeedbackCategory('bug');
+        setFeedbackSeverity('medium');
+        setSuccessMessage('Feedback submitted! Thank you.');
+        setTimeout(() => setSuccessMessage(''), 3000);
+      } else {
+        setError('Failed to submit feedback');
+      }
+    } catch (err) {
+      setError('Connection error');
+    } finally {
+      setFeedbackSending(false);
+    }
+  };
+
+
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleDateString('en-US', { 
