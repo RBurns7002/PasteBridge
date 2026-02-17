@@ -1117,15 +1117,17 @@ async def submit_feedback(data: FeedbackRequest, credentials: HTTPAuthorizationC
 
 
 @api_router.get("/admin/feedback")
-async def list_feedback(status: Optional[str] = None, category: Optional[str] = None):
-    """List all feedback entries"""
+async def list_feedback(status: Optional[str] = None, category: Optional[str] = None, page: int = 1, limit: int = 50):
+    """List all feedback entries with pagination"""
     query = {}
     if status:
         query["status"] = status
     if category:
         query["category"] = category
-    items = await db.feedback.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
-    return items
+    skip = (page - 1) * limit
+    total = await db.feedback.count_documents(query)
+    items = await db.feedback.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    return {"items": items, "total": total, "page": page, "pages": (total + limit - 1) // limit}
 
 
 @api_router.post("/admin/feedback/summarize")
