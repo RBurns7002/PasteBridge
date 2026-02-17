@@ -1668,6 +1668,32 @@ async def view_notepad(code: str):
         }}
         
         setInterval(poll, 3000);
+        
+        async function summarizeNotepad() {{
+            var btn = document.getElementById('summarizeBtn');
+            var box = document.getElementById('summaryBox');
+            btn.disabled = true;
+            btn.textContent = 'Summarizing...';
+            box.className = 'summary-box show';
+            box.textContent = 'Analyzing content with AI...';
+            try {{
+                var r = await fetch('/api/notepad/' + CODE + '/summarize', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{max_length: 500}})
+                }});
+                var d = await r.json();
+                if (r.ok) {{
+                    box.textContent = d.summary;
+                }} else {{
+                    box.textContent = d.detail || 'Summarization failed';
+                }}
+            }} catch(e) {{
+                box.textContent = 'Error connecting to AI service';
+            }}
+            btn.disabled = false;
+            btn.textContent = 'AI Summarize';
+        }}
     </script>
 </body>
 </html>'''
