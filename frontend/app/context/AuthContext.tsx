@@ -87,6 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const userData = await response.json();
           setUser(userData);
           setToken(storedToken);
+          registerPushNotifications(storedToken);
         } else {
           // Token invalid, clear storage
           await deleteSecureItem(TOKEN_KEY);
