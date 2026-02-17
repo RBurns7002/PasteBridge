@@ -100,6 +100,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const registerPushNotifications = async (authToken: string) => {
+    if (Platform.OS === 'web') return;
+    try {
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      if (finalStatus !== 'granted') return;
+
+      const pushTokenData = await Notifications.getExpoPushTokenAsync();
+      const pushToken = pushTokenData.data;
+
+      // Store locally to avoid re-registering
+      const stored = await getSecureItem(PUSH_TOKEN_KEY);
+      if (stored === pushToken) return;
+
+      await fetch(`${EXPO_PUBLIC_BACKEND_URL}/api/auth/push-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ token: pushToken }),
+      });
+      await setSecureItem(PUSH_TOKEN_KEY, pushToken);
+    } catch (err) {
+      console.warn('Push notification registration failed:', err);
+    }
+  };
+
   const login = async (email: string, password: string) => {
     try {
       const response = await fetch(`${EXPO_PUBLIC_BACKEND_URL}/api/auth/login`, {
