@@ -1719,4 +1719,50 @@ const styles = StyleSheet.create({
     color: '#71717a',
     fontSize: 14,
   },
+
+  // Feedback Modal Styles
+  feedbackModalContent: {
+    backgroundColor: '#1a1a2e',
+    borderRadius: 24,
+    padding: 24,
+    marginHorizontal: 20,
+    maxHeight: '85%',
+  },
+  feedbackLabel: {
+    color: '#a1a1aa',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 12,
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  feedbackCategoryRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  feedbackCategoryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  feedbackCategoryActive: {
+    backgroundColor: 'rgba(96,165,250,0.15)',
+    borderColor: '#60a5fa',
+  },
+  feedbackCategoryText: {
+    color: '#71717a',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  feedbackCategoryTextActive: {
+    color: '#60a5fa',
+  },
 });
