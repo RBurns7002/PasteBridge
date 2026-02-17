@@ -1182,6 +1182,8 @@ export default function Index() {
         </View>
       </Modal>
     </SafeAreaView>
+  );
+}
 
 const styles = StyleSheet.create({
   container: {
