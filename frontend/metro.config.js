@@ -20,6 +20,6 @@ config.cacheStores = [
 // config.resolver.blacklistRE = /node_modules\/.*\/(android|ios|windows|macos|__tests__|\.git|.*\.android\.js|.*\.ios\.js)$/;
 
 // Reduce the number of workers to decrease resource usage
-config.maxWorkers = 2;
+config.maxWorkers = 1;
 
 module.exports = config;

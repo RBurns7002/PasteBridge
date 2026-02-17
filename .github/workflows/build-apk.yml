@@ -75,8 +75,14 @@ jobs:
       working-directory: frontend/android
       run: chmod +x gradlew
 
+    - name: Clear Metro cache
+      working-directory: frontend
+      run: rm -rf node_modules/.cache .metro-cache
+
     - name: Build Release APK
       working-directory: frontend/android
+      env:
+        NODE_OPTIONS: "--max-old-space-size=4096"
       run: ./gradlew assembleRelease --no-daemon --stacktrace
 
     - name: Find and rename APK
