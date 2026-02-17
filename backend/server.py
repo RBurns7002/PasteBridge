@@ -1575,6 +1575,15 @@ async def view_notepad(code: str):
             </div>
         </div>
         {expiration_banner}
+        <div class="export-btns">
+            <a href="/api/notepad/{notepad_code}/export?format=txt" class="export-btn" download>Export TXT</a>
+            <a href="/api/notepad/{notepad_code}/export?format=md" class="export-btn" download>Export MD</a>
+            <a href="/api/notepad/{notepad_code}/export?format=json" class="export-btn" download>Export JSON</a>
+        </div>
+        <div class="summarize-section">
+            <button class="summarize-btn" id="summarizeBtn" onclick="summarizeNotepad()">AI Summarize</button>
+            <div class="summary-box" id="summaryBox"></div>
+        </div>
         <div class="status">
             <span class="dot"></span>
             <span id="statusText">Live updating</span>
