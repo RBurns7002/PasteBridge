@@ -1086,9 +1086,102 @@ export default function Index() {
           </View>
         </View>
       </Modal>
+
+      {/* Feedback Modal */}
+      <Modal
+        visible={feedbackModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setFeedbackModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.feedbackModalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Send Feedback</Text>
+              <TouchableOpacity onPress={() => setFeedbackModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#71717a" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.feedbackLabel}>Category</Text>
+            <View style={styles.feedbackCategoryRow}>
+              {[
+                { key: 'bug', label: 'Bug', icon: 'bug-outline' },
+                { key: 'feature_request', label: 'Feature', icon: 'bulb-outline' },
+                { key: 'missing_feature', label: 'Missing', icon: 'help-circle-outline' },
+                { key: 'other', label: 'Other', icon: 'ellipsis-horizontal' },
+              ].map(cat => (
+                <TouchableOpacity
+                  key={cat.key}
+                  style={[styles.feedbackCategoryBtn, feedbackCategory === cat.key && styles.feedbackCategoryActive]}
+                  onPress={() => setFeedbackCategory(cat.key)}
+                >
+                  <Ionicons name={cat.icon as any} size={16} color={feedbackCategory === cat.key ? '#60a5fa' : '#71717a'} />
+                  <Text style={[styles.feedbackCategoryText, feedbackCategory === cat.key && styles.feedbackCategoryTextActive]}>
+                    {cat.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.feedbackLabel}>Severity</Text>
+            <View style={styles.feedbackCategoryRow}>
+              {[
+                { key: 'low', label: 'Low' },
+                { key: 'medium', label: 'Medium' },
+                { key: 'high', label: 'High' },
+                { key: 'critical', label: 'Critical' },
+              ].map(sev => (
+                <TouchableOpacity
+                  key={sev.key}
+                  style={[styles.feedbackCategoryBtn, feedbackSeverity === sev.key && styles.feedbackCategoryActive]}
+                  onPress={() => setFeedbackSeverity(sev.key)}
+                >
+                  <Text style={[styles.feedbackCategoryText, feedbackSeverity === sev.key && styles.feedbackCategoryTextActive]}>
+                    {sev.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.feedbackLabel}>Title</Text>
+            <TextInput
+              style={styles.authInput}
+              value={feedbackTitle}
+              onChangeText={setFeedbackTitle}
+              placeholder="Brief summary"
+              placeholderTextColor="#52525b"
+              data-testid="feedback-title-input"
+            />
+
+            <Text style={styles.feedbackLabel}>Description</Text>
+            <TextInput
+              style={[styles.authInput, { height: 100, textAlignVertical: 'top' }]}
+              value={feedbackDesc}
+              onChangeText={setFeedbackDesc}
+              placeholder="Describe the bug, feature, or issue in detail..."
+              placeholderTextColor="#52525b"
+              multiline
+              numberOfLines={4}
+              data-testid="feedback-desc-input"
+            />
+
+            <TouchableOpacity
+              style={[styles.authSubmitBtn, feedbackSending && styles.authSubmitBtnDisabled]}
+              onPress={submitFeedback}
+              disabled={feedbackSending}
+              data-testid="feedback-submit-btn"
+            >
+              {feedbackSending ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.authSubmitBtnText}>Submit Feedback</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
-  );
-}
 
 const styles = StyleSheet.create({
   container: {
